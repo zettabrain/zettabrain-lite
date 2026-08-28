@@ -43,4 +43,4 @@ zettabrain-lite = "zettabrain_lite.cli:main"
 include = ["zettabrain_lite*"]
 
 [tool.setuptools.package-data]
-zettabrain_lite = ["static/**/*", "skills/*.md", "scripts/*.py"]
+zettabrain_lite = ["static/*", "skills/*.md", "scripts/*.py"]

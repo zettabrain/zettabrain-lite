@@ -6,6 +6,7 @@ Single-user RAG + Skills platform with multi-provider LLM support.
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -320,10 +321,26 @@ class PullRequest(BaseModel):
 
 
 class StorageAddRequest(BaseModel):
-    type: str
+    type: str  # local, nfs, smb, s3
     label: str
-    path: str
     role: str = "secondary"
+    # Local
+    path: Optional[str] = None
+    # NFS
+    server_ip: Optional[str] = None
+    export_path: Optional[str] = None
+    mount_point: Optional[str] = None
+    nfs_version: Optional[str] = "4"
+    # SMB
+    share_name: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    domain: Optional[str] = None
+    # S3
+    bucket: Optional[str] = None
+    region: Optional[str] = None
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
 
 
 class GenerateBody(BaseModel):
@@ -413,20 +430,139 @@ async def list_storage():
     return {"sources": _get_storage_sources(), "doc_count": _count_docs_all_sources()}
 
 
+def _validate_ip(ip: str) -> bool:
+    return bool(re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip))
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _mount_nfs(server_ip: str, export_path: str, mount_point: str, nfs_version: str = "4") -> str:
+    Path(mount_point).mkdir(parents=True, exist_ok=True)
+    if _is_macos():
+        opts = f"nfsvers={nfs_version},rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2"
+        cmd = ["mount", "-t", "nfs", "-o", opts, f"{server_ip}:{export_path}", mount_point]
+    else:
+        opts = f"defaults,_netdev,nfsvers={nfs_version},rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2"
+        cmd = ["mount", "-t", "nfs", "-o", opts, f"{server_ip}:{export_path}", mount_point]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return result.stderr.strip() or f"Mount failed (exit code {result.returncode})"
+    return ""
+
+
+def _mount_smb(server_ip: str, share_name: str, mount_point: str,
+               username: str = "guest", password: str = "", domain: str = "") -> str:
+    Path(mount_point).mkdir(parents=True, exist_ok=True)
+    creds_dir = Path("/etc/zettabrain")
+    creds_dir.mkdir(parents=True, exist_ok=True)
+    creds_file = creds_dir / f"smb-{server_ip}.credentials"
+    creds_content = f"username={username}\npassword={password}\n"
+    if domain:
+        creds_content += f"domain={domain}\n"
+    creds_file.write_text(creds_content, encoding="utf-8")
+    creds_file.chmod(0o600)
+
+    if _is_macos():
+        mount_url = f"//{username}:{password}@{server_ip}/{share_name}"
+        cmd = ["mount", "-t", "smbfs", mount_url, mount_point]
+    else:
+        opts = f"uid=0,gid=0,file_mode=0755,dir_mode=0755,noperm,_netdev,credentials={creds_file}"
+        cmd = ["mount", "-t", "cifs", f"//{server_ip}/{share_name}", mount_point, "-o", opts]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        return result.stderr.strip() or f"Mount failed (exit code {result.returncode})"
+    return ""
+
+
 @app.post("/api/storage")
 async def add_storage(body: StorageAddRequest):
-    p = Path(body.path)
-    if body.type == "local" and not p.exists():
+    error = ""
+    final_path = ""
+
+    if body.type == "local":
+        if not body.path:
+            raise HTTPException(status_code=400, detail="Path is required for local storage")
+        p = Path(body.path)
         p.mkdir(parents=True, exist_ok=True)
+        final_path = body.path
+
+    elif body.type == "nfs":
+        if not body.server_ip or not body.export_path or not body.mount_point:
+            raise HTTPException(status_code=400, detail="NFS requires server_ip, export_path, and mount_point")
+        if not _validate_ip(body.server_ip):
+            raise HTTPException(status_code=400, detail="Invalid IP address format")
+        if not body.export_path.startswith("/"):
+            raise HTTPException(status_code=400, detail="Export path must start with /")
+        error = _mount_nfs(body.server_ip, body.export_path, body.mount_point, body.nfs_version or "4")
+        final_path = body.mount_point
+
+    elif body.type == "smb":
+        if not body.server_ip or not body.share_name or not body.mount_point:
+            raise HTTPException(status_code=400, detail="SMB requires server_ip, share_name, and mount_point")
+        if not _validate_ip(body.server_ip):
+            raise HTTPException(status_code=400, detail="Invalid IP address format")
+        error = _mount_smb(
+            body.server_ip, body.share_name, body.mount_point,
+            body.username or "guest", body.password or "", body.domain or "",
+        )
+        final_path = body.mount_point
+
+    elif body.type == "s3":
+        if not body.bucket or not body.mount_point:
+            raise HTTPException(status_code=400, detail="S3 requires bucket and mount_point")
+        Path(body.mount_point).mkdir(parents=True, exist_ok=True)
+        s3_cfg = BASE_DIR / "s3_credentials"
+        s3_cfg.parent.mkdir(parents=True, exist_ok=True)
+        s3_content = f"{body.access_key or ''}:{body.secret_key or ''}"
+        s3_cfg.write_text(s3_content, encoding="utf-8")
+        s3_cfg.chmod(0o600)
+        final_path = body.mount_point
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported storage type: {body.type}")
+
+    if error:
+        raise HTTPException(status_code=500, detail=f"Mount failed: {error}")
 
     STORAGE_CONF.parent.mkdir(parents=True, exist_ok=True)
-    line = f"{body.role}|{body.type}|{body.label}|{body.path}\n"
+    line = f"{body.role}|{body.type}|{body.label}|{final_path}\n"
     with open(STORAGE_CONF, "a", encoding="utf-8") as f:
         f.write(line)
 
     return {"success": True, "source": {
-        "role": body.role, "type": body.type, "label": body.label, "path": body.path
+        "role": body.role, "type": body.type, "label": body.label, "path": final_path
     }}
+
+
+@app.post("/api/storage/test")
+async def test_storage(body: StorageAddRequest):
+    """Test storage connectivity without mounting."""
+    if body.type == "local":
+        exists = Path(body.path or "").exists() if body.path else False
+        return {"reachable": exists, "message": "Path exists" if exists else "Path not found"}
+
+    if body.type == "nfs":
+        if not body.server_ip:
+            return {"reachable": False, "message": "Server IP required"}
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "3", body.server_ip],
+            capture_output=True, text=True, timeout=10,
+        )
+        reachable = result.returncode == 0
+        return {"reachable": reachable, "message": f"Server {'reachable' if reachable else 'unreachable'}"}
+
+    if body.type == "smb":
+        if not body.server_ip:
+            return {"reachable": False, "message": "Server IP required"}
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "3", body.server_ip],
+            capture_output=True, text=True, timeout=10,
+        )
+        reachable = result.returncode == 0
+        return {"reachable": reachable, "message": f"Server {'reachable' if reachable else 'unreachable'}"}
+
+    return {"reachable": False, "message": "Test not supported for this type"}
 
 
 @app.delete("/api/storage/{index}")

@@ -4,240 +4,1410 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ZettaBrain Lite</title>
-<link rel="stylesheet" href="/static/css/main.css">
+<style>
+  /* ── Reset & Base ─────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0f1117;
+    --bg2:       #161b27;
+    --bg3:       #1e2535;
+    --border:    #2a3347;
+    --accent:    #3b82f6;
+    --accent2:   #6366f1;
+    --green:     #22c55e;
+    --red:       #ef4444;
+    --yellow:    #f59e0b;
+    --text:      #e2e8f0;
+    --text2:     #94a3b8;
+    --text3:     #475569;
+    --radius:    10px;
+    --shadow:    0 4px 24px rgba(0,0,0,0.4);
+  }
+
+  html, body { height: 100%; font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+
+  /* ── Layout ───────────────────────────────────── */
+  .app       { display: flex; height: 100vh; overflow: hidden; }
+  .sidebar   { width: 280px; min-width: 280px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .main      { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .topbar    { height: 56px; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 12px; flex-shrink: 0; }
+  .chat-area { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+  .input-bar { padding: 16px 20px; background: var(--bg2); border-top: 1px solid var(--border); flex-shrink: 0; }
+
+  /* ── Sidebar ──────────────────────────────────── */
+  .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); }
+  .logo { display: flex; flex-direction: column; gap: 4px; }
+  .logo-title { font-size: 22px; font-weight: 700; color: var(--text); }
+  .logo-title span { color: var(--accent2); }
+  .logo-version { font-size: 11px; color: var(--text3); }
+
+  .sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .sidebar-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); margin-bottom: 10px; }
+
+  /* Status dots */
+  .status-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+  .status-label { color: var(--text2); font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.red    { background: var(--red); }
+  .dot.yellow { background: var(--yellow); }
+
+  /* Stats */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card { background: var(--bg3); border-radius: var(--radius); padding: 10px 12px; }
+  .stat-val { font-size: 20px; font-weight: 700; color: var(--accent); line-height: 1; }
+  .stat-lbl { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+  /* Model selector */
+  .select { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; outline: none; }
+  .select:focus { border-color: var(--accent); }
+
+  /* Sources list */
+  .sources-list { list-style: none; display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; }
+  .sources-list li { font-size: 12px; color: var(--text2); padding: 4px 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 7px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #2563eb; }
+  .btn-ghost   { background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+  .btn-ghost:hover:not(:disabled) { background: var(--border); color: var(--text); }
+  .btn-danger  { background: transparent; color: var(--red); border: 1px solid var(--red); }
+  .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.1); }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+  .btn-full { width: 100%; justify-content: center; }
+
+  /* ── Topbar ───────────────────────────────────── */
+  .topbar-title { font-size: 15px; font-weight: 600; flex: 1; }
+  .topbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab-btn { background: none; border: none; color: var(--text2); padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .tab-btn.active, .tab-btn:hover { background: var(--bg3); color: var(--text); }
+
+  /* ── Chat messages ────────────────────────────── */
+  .msg { display: flex; gap: 12px; max-width: 820px; animation: fadeUp 0.2s ease; }
+  .msg.user { flex-direction: row-reverse; margin-left: auto; }
+  .msg-avatar { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
+  .msg.user .msg-avatar { background: linear-gradient(135deg, var(--accent), var(--accent2)); }
+  .msg.assistant .msg-avatar { background: var(--bg3); border: 1px solid var(--border); }
+  .msg-body { flex: 1; }
+  .msg-bubble { padding: 12px 16px; border-radius: 12px; line-height: 1.7; }
+  .msg.user .msg-bubble { background: var(--accent); color: #fff; border-radius: 12px 4px 12px 12px; }
+  .msg.assistant .msg-bubble { background: var(--bg3); border: 1px solid var(--border); border-radius: 4px 12px 12px 12px; }
+  .msg-meta { font-size: 11px; color: var(--text3); margin-top: 5px; padding: 0 4px; }
+  .msg.user .msg-meta { text-align: right; }
+
+  /* Source chips */
+  .source-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--bg2); border: 1px solid var(--border); color: var(--text2); padding: 3px 9px; border-radius: 20px; font-size: 11px; cursor: pointer; transition: all 0.15s; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Typing cursor */
+  .cursor { display: inline-block; width: 2px; height: 14px; background: var(--accent); margin-left: 2px; animation: blink 0.8s infinite; vertical-align: middle; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* Welcome screen */
+  .welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: 40px; gap: 16px; color: var(--text2); }
+  .welcome-icon { font-size: 56px; }
+  .welcome h2 { font-size: 22px; font-weight: 700; color: var(--text); }
+  .welcome p { max-width: 400px; line-height: 1.7; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+  .suggestion { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 8px 14px; border-radius: 20px; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .suggestion:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Input bar ────────────────────────────────── */
+  .input-wrap { display: flex; gap: 10px; align-items: flex-end; background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; transition: border-color 0.15s; }
+  .input-wrap:focus-within { border-color: var(--accent); }
+  .chat-input { flex: 1; background: none; border: none; color: var(--text); font-size: 14px; resize: none; outline: none; max-height: 160px; min-height: 24px; line-height: 1.5; font-family: inherit; }
+  .chat-input::placeholder { color: var(--text3); }
+  .send-btn { background: var(--accent); border: none; color: #fff; width: 36px; height: 36px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s; font-size: 16px; }
+  .send-btn:hover:not(:disabled) { background: #2563eb; }
+  .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .input-hint { font-size: 11px; color: var(--text3); margin-top: 6px; text-align: right; }
+
+  /* ── Panels ──────────────────────────────────── */
+  .panel { display: none; flex-direction: column; height: 100%; }
+  .panel.active { display: flex; }
+  .panel-content { flex: 1; overflow-y: auto; padding: 24px; }
+  .panel-section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .panel-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+  .input-field { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; }
+  .input-field:focus { border-color: var(--accent); }
+  .form-row { display: flex; gap: 10px; align-items: flex-end; }
+  .form-row .input-field { flex: 1; }
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; font-weight: 500; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; color: var(--text2); font-size: 13px; cursor: pointer; margin-top: 10px; }
+  .checkbox-row input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .log-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: 'Courier New', monospace; font-size: 12px; color: var(--green); min-height: 120px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
+
+  /* ── Skills grid ─────────────────────────────── */
+  .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+  .skill-card { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: all 0.15s; }
+  .skill-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .skill-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+  .skill-card p { font-size: 12px; color: var(--text2); line-height: 1.5; }
+  .skill-tags { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+  .skill-tag { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: rgba(99,102,241,0.15); color: var(--accent2); }
+
+  /* ── Storage fields ──────────────────────────── */
+  .storage-fields { display: none; }
+  .storage-fields.active { display: block; }
+  .storage-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .storage-table th { text-align: left; color: var(--text3); font-size: 11px; text-transform: uppercase; padding: 8px; border-bottom: 1px solid var(--border); }
+  .storage-table td { padding: 8px; border-bottom: 1px solid var(--border); color: var(--text2); }
+  .storage-table .type-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .type-nfs { background: rgba(34,197,94,0.15); color: var(--green); }
+  .type-smb { background: rgba(59,130,246,0.15); color: var(--accent); }
+  .type-s3 { background: rgba(245,158,11,0.15); color: var(--yellow); }
+  .type-local { background: rgba(99,102,241,0.15); color: var(--accent2); }
+
+  /* ── Source modal ─────────────────────────────── */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; width: 90%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
+  .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .modal-title { font-size: 15px; font-weight: 600; }
+  .modal-close { background: none; border: none; color: var(--text2); font-size: 20px; cursor: pointer; line-height: 1; }
+  .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .source-preview { background: var(--bg3); border-radius: 6px; padding: 12px; font-size: 13px; color: var(--text2); line-height: 1.7; white-space: pre-wrap; }
+
+  /* ── Toast ────────────────────────────────────── */
+  .toast-container { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
+  .toast { background: var(--bg2); border: 1px solid var(--border); padding: 12px 16px; border-radius: 8px; font-size: 13px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 8px; animation: slideIn 0.2s ease; min-width: 240px; }
+  .toast.success { border-color: var(--green); }
+  .toast.error   { border-color: var(--red); }
+  @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes fadeUp  { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  /* ── Scrollbar ────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ── Markdown inside answer bubbles ──────────────── */
+  .msg.assistant .msg-bubble p { margin-bottom: 0.6em; }
+  .msg.assistant .msg-bubble p:last-child { margin-bottom: 0; }
+  .msg.assistant .msg-bubble ul, .msg.assistant .msg-bubble ol { padding-left: 1.4em; margin-bottom: 0.6em; }
+  .msg.assistant .msg-bubble li { margin-bottom: 0.25em; }
+  .msg.assistant .msg-bubble strong { color: var(--text); font-weight: 600; }
+  .msg.assistant .msg-bubble code { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-family: 'Courier New', monospace; font-size: 12px; }
+
+  /* ── Spinner ──────────────────────────────────── */
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Responsive ───────────────────────────────── */
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .topbar-actions { gap: 4px; }
+    .tab-btn { padding: 5px 8px; font-size: 12px; }
+  }
+</style>
 </head>
 <body>
+
 <div class="app">
 
-  <!-- Sidebar -->
-  <div class="sidebar">
-    <div class="sidebar-logo">
-      <svg viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="url(#g1)"/><defs><linearGradient id="g1" x1="0" y1="0" x2="32" y2="32"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><circle cx="16" cy="16" r="3" fill="white"/><circle cx="10" cy="10" r="2" fill="white" opacity="0.8"/><circle cx="22" cy="22" r="2" fill="white" opacity="0.8"/><path d="M10 10L16 16M16 16L22 22" stroke="white" stroke-width="1.2" opacity="0.5"/></svg>
-      <span>ZettaBrain Lite</span>
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <div class="logo-title">Zetta<span>Brain</span></div>
+        <div class="logo-version">Lite · v0.1.0</div>
+      </div>
     </div>
 
-    <div class="sidebar-section">Mode</div>
-    <button class="nav-item active" id="nav-chat" onclick="showTab('chat')">
-      <span>&#128172;</span> Chat (RAG)
-    </button>
-    <button class="nav-item" id="nav-generate" onclick="showTab('generate')">
-      <span>&#10024;</span> Generate (Skills)
-    </button>
-
-    <div class="sidebar-section">Manage</div>
-    <button class="nav-item" id="nav-storage" onclick="showTab('storage')">
-      <span>&#128193;</span> Storage Sources
-    </button>
-    <button class="nav-item" id="nav-ingest" onclick="showTab('ingest')">
-      <span>&#128229;</span> Ingestion
-    </button>
-    <button class="nav-item" id="nav-settings" onclick="showTab('settings')">
-      <span>&#9881;</span> Settings
-    </button>
-
-    <div style="flex:1"></div>
-    <div style="padding:8px 12px; font-size:0.7rem; color:var(--muted);">
-      <span id="status-dot" class="dot dot-red"></span>
-      <span id="status-text">Checking...</span>
+    <!-- System Status -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">System Status</div>
+      <div class="status-row">
+        <span class="status-label">Ollama</span>
+        <div class="dot" id="dot-ollama"></div>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Vector Store</span>
+        <div class="dot" id="dot-vector"></div>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Storage</span>
+        <div class="dot" id="dot-storage"></div>
+      </div>
     </div>
-  </div>
 
-  <!-- Main Content -->
+    <!-- Stats -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Knowledge Base</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-val" id="stat-chunks">--</div>
+          <div class="stat-lbl">Chunks</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="stat-docs">--</div>
+          <div class="stat-lbl">Documents</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Model -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Active Model</div>
+      <select class="select" id="model-select">
+        <option value="">Loading...</option>
+      </select>
+    </div>
+
+    <!-- Ingested Sources -->
+    <div class="sidebar-section" style="flex:1; overflow:hidden; display:flex; flex-direction:column;">
+      <div class="sidebar-label">Ingested Files</div>
+      <ul class="sources-list" id="sources-list">
+        <li style="color:var(--text3)">No files ingested yet</li>
+      </ul>
+    </div>
+
+    <!-- Actions -->
+    <div style="padding:16px; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--border);">
+      <button class="btn btn-ghost btn-full btn-sm" onclick="refreshStatus()">Refresh Status</button>
+      <button class="btn btn-danger btn-full btn-sm" onclick="clearVectorStore()">Clear Vector Store</button>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
   <div class="main">
 
-    <!-- ═══ CHAT TAB ═══ -->
-    <div id="tab-chat">
-      <div class="header">
-        <h2>Document Q&A</h2>
-        <div style="font-size:0.78rem; color:var(--muted);">
-          <span id="chunk-count">0</span> chunks indexed
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-title">ZettaBrain Lite</div>
+      <div class="topbar-actions">
+        <button class="tab-btn active" id="tab-chat" onclick="switchTab('chat')">Chat</button>
+        <button class="tab-btn" id="tab-generate" onclick="switchTab('generate')">Generate</button>
+        <button class="tab-btn" id="tab-ingest" onclick="switchTab('ingest')">Ingest</button>
+        <button class="tab-btn" id="tab-storage" onclick="switchTab('storage')">Storage</button>
+        <button class="tab-btn" id="tab-settings" onclick="switchTab('settings')">Settings</button>
+      </div>
+    </div>
+
+    <!-- CHAT PANEL -->
+    <div class="panel active" id="panel-chat" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+      <div class="chat-area" id="chat-area">
+        <div class="welcome" id="welcome">
+          <div class="welcome-icon">&#129504;</div>
+          <h2>Ask anything about your documents</h2>
+          <p>ZettaBrain searches your local knowledge base using AI — completely private, zero cloud.</p>
+          <div class="suggestions" id="suggestions">
+            <div class="suggestion" onclick="sendSuggestion(this)">What are the main topics?</div>
+            <div class="suggestion" onclick="sendSuggestion(this)">Summarise my documents</div>
+            <div class="suggestion" onclick="sendSuggestion(this)">List the key conclusions</div>
+          </div>
         </div>
       </div>
-      <div class="chat-container" id="chat-messages"></div>
       <div class="input-bar">
-        <select id="model-select" title="Select model"></select>
-        <input type="text" id="chat-input" placeholder="Ask a question about your documents..." onkeydown="if(event.key==='Enter')sendChat()">
-        <button class="btn btn-primary" onclick="sendChat()">Send</button>
+        <div class="input-wrap">
+          <textarea class="chat-input" id="chat-input" rows="1"
+            placeholder="Ask a question about your documents..."
+            onkeydown="handleKey(event)"
+            oninput="autoResize(this)"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send (Enter)">&#10148;</button>
+        </div>
+        <div class="input-hint">Enter to send · Shift+Enter for new line</div>
       </div>
     </div>
 
-    <!-- ═══ GENERATE TAB ═══ -->
-    <div id="tab-generate" class="hidden">
-      <div class="header">
-        <h2>Generate Documents</h2>
-        <button class="btn btn-sm btn-secondary" onclick="showUploadSkill()">Upload Skill</button>
-      </div>
-      <div class="panel">
-        <div id="skills-list" class="skills-grid"></div>
-        <div id="generate-form" class="hidden" style="max-width:700px;">
-          <div class="card">
-            <h3 id="gen-skill-name"></h3>
-            <p id="gen-skill-desc" style="color:var(--muted); font-size:0.82rem; margin-bottom:16px;"></p>
-            <div class="field">
-              <label>Your request</label>
-              <textarea id="gen-input" placeholder="Describe what you want to generate..."></textarea>
-            </div>
-            <div style="display:flex; gap:10px;">
-              <button class="btn btn-primary" onclick="runGenerate()">Generate</button>
-              <button class="btn btn-secondary" onclick="backToSkills()">Back</button>
-            </div>
+    <!-- GENERATE PANEL -->
+    <div class="panel" id="panel-generate">
+      <div class="panel-content">
+        <div class="panel-section">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <h3>Document Generation (Skills)</h3>
+            <button class="btn btn-ghost btn-sm" onclick="showUploadSkillModal()">Upload Skill</button>
           </div>
-          <div id="gen-output" class="card hidden">
-            <h3>Generated Output</h3>
-            <div id="gen-content" style="white-space:pre-wrap; font-size:0.85rem; line-height:1.7;"></div>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:16px;">
+            Select a skill to generate documents using AI. Skills define the structure and style of the output.
+          </p>
+          <div class="skills-grid" id="skills-grid"></div>
+        </div>
+
+        <div class="panel-section" id="gen-form-section" style="display:none;">
+          <h3 id="gen-skill-title">Generate</h3>
+          <p id="gen-skill-desc" style="color:var(--text2); font-size:13px; margin-bottom:14px;"></p>
+          <div class="form-group">
+            <label>Your request / input</label>
+            <textarea class="input-field" id="gen-input" rows="4" placeholder="Describe what you want to generate..."></textarea>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-primary" id="gen-btn" onclick="runGenerate()">Generate</button>
+            <button class="btn btn-ghost" onclick="backToSkills()">Back to Skills</button>
+          </div>
+        </div>
+
+        <div class="panel-section" id="gen-output-section" style="display:none;">
+          <h3>Generated Output</h3>
+          <div id="gen-output" style="white-space:pre-wrap; font-size:13px; line-height:1.7; color:var(--text2); padding:12px; background:var(--bg); border-radius:6px; max-height:500px; overflow-y:auto;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INGEST PANEL -->
+    <div class="panel" id="panel-ingest">
+      <div class="panel-content">
+        <div class="panel-section">
+          <h3>Ingest Documents</h3>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+            Index documents from your storage into the vector store. Supports PDF, TXT, MD, DOCX.
+          </p>
+          <div class="form-row">
+            <input class="input-field" id="ingest-folder" type="text"
+              placeholder="Folder path (leave blank to use configured storage)" />
+            <button class="btn btn-primary" id="ingest-btn" onclick="runIngest()">Start Ingest</button>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="ingest-rebuild">
+            Force full rebuild (re-embed all documents)
+          </label>
+        </div>
+
+        <div class="panel-section">
+          <h3>Ingest Log</h3>
+          <div class="log-box" id="ingest-log">Ready. Click "Start Ingest" to begin.</div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Vector Store Status</h3>
+          <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
+            <div class="stat-card">
+              <div class="stat-val" id="ingest-chunks">--</div>
+              <div class="stat-lbl">Total Chunks</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="ingest-files">--</div>
+              <div class="stat-lbl">Source Files</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="ingest-docs">--</div>
+              <div class="stat-lbl">Documents</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ═══ STORAGE TAB ═══ -->
-    <div id="tab-storage" class="hidden">
-      <div class="header"><h2>Storage Sources</h2></div>
-      <div class="panel">
-        <div class="card">
-          <h3>Configured Sources</h3>
-          <table>
+    <!-- STORAGE PANEL -->
+    <div class="panel" id="panel-storage">
+      <div class="panel-content">
+        <div class="panel-section">
+          <h3>Configured Storage Sources</h3>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+            Manage document storage locations. ZettaBrain can ingest from local folders, NFS, SMB/CIFS, and S3-compatible storage.
+          </p>
+          <table class="storage-table" id="storage-table">
             <thead><tr><th>Type</th><th>Label</th><th>Path</th><th>Role</th><th></th></tr></thead>
-            <tbody id="storage-table"></tbody>
+            <tbody id="storage-tbody"></tbody>
           </table>
         </div>
-        <div class="card">
+
+        <div class="panel-section">
           <h3>Add Storage Source</h3>
-          <div class="field">
-            <label>Type</label>
-            <select id="storage-type">
+          <div class="form-group">
+            <label>Storage Type</label>
+            <select class="input-field" id="storage-type" onchange="toggleStorageFields()">
               <option value="local">Local Folder</option>
               <option value="nfs">NFS Mount</option>
               <option value="smb">SMB/CIFS Share</option>
-              <option value="s3">S3-Compatible (FUSE mount)</option>
+              <option value="s3">S3-Compatible (FUSE)</option>
             </select>
           </div>
-          <div class="field">
+          <div class="form-group">
             <label>Label</label>
-            <input id="storage-label" placeholder="e.g. Engineering Docs">
+            <input class="input-field" id="storage-label" placeholder="e.g. Engineering Docs">
           </div>
-          <div class="field">
-            <label>Path (mount point or local directory)</label>
-            <input id="storage-path" placeholder="/mnt/docs or /home/user/documents">
-          </div>
-          <button class="btn btn-primary" onclick="addStorage()">Add Source</button>
-        </div>
-      </div>
-    </div>
 
-    <!-- ═══ INGEST TAB ═══ -->
-    <div id="tab-ingest" class="hidden">
-      <div class="header"><h2>Document Ingestion</h2></div>
-      <div class="panel">
-        <div class="card">
-          <h3>Ingest from Storage Sources</h3>
-          <p style="color:var(--muted); font-size:0.82rem; margin-bottom:16px;">
-            Process documents from your configured storage sources into the vector store for RAG queries.
-          </p>
-          <div id="ingest-sources"></div>
-          <div style="margin-top:16px; display:flex; gap:10px;">
-            <button class="btn btn-primary" onclick="ingestAll()">Ingest All Sources</button>
-            <button class="btn btn-danger btn-sm" onclick="clearVectorstore()">Clear Vector Store</button>
-          </div>
-          <pre id="ingest-output" style="margin-top:16px; background:var(--bg); padding:12px; border-radius:var(--radius); font-size:0.78rem; color:var(--muted); display:none; white-space:pre-wrap;"></pre>
-        </div>
-        <div class="card">
-          <h3>Ingested Files</h3>
-          <div id="ingested-files" style="font-size:0.82rem; color:var(--muted);"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ═══ SETTINGS TAB ═══ -->
-    <div id="tab-settings" class="hidden">
-      <div class="header"><h2>Settings</h2></div>
-      <div class="panel" style="max-width:700px;">
-        <div class="card">
-          <h3>Local LLM (Ollama)</h3>
-          <div class="field">
-            <label>Ollama Host</label>
-            <input id="set-ollama-host" placeholder="http://localhost:11434">
-          </div>
-          <div class="field">
-            <label>Default LLM Model</label>
-            <input id="set-llm-model" placeholder="llama3.1:8b">
-          </div>
-          <div class="field">
-            <label>Embedding Model</label>
-            <input id="set-embed-model" placeholder="nomic-embed-text">
-          </div>
-          <div class="field">
-            <label>Pull a model</label>
-            <div style="display:flex; gap:8px;">
-              <input id="pull-model-name" placeholder="llama3.1:8b" style="flex:1;">
-              <button class="btn btn-sm btn-secondary" onclick="pullModel()">Pull</button>
+          <!-- Local fields -->
+          <div class="storage-fields active" id="fields-local">
+            <div class="form-group">
+              <label>Folder Path</label>
+              <input class="input-field" id="storage-local-path" placeholder="/home/user/documents">
             </div>
-            <pre id="pull-output" style="margin-top:8px; font-size:0.75rem; color:var(--muted); display:none;"></pre>
           </div>
+
+          <!-- NFS fields -->
+          <div class="storage-fields" id="fields-nfs">
+            <div class="form-group">
+              <label>Server IP Address</label>
+              <input class="input-field" id="storage-nfs-ip" placeholder="192.168.1.100">
+            </div>
+            <div class="form-group">
+              <label>NFS Export Path</label>
+              <input class="input-field" id="storage-nfs-export" placeholder="/exports/documents">
+            </div>
+            <div class="form-group">
+              <label>Local Mount Point</label>
+              <input class="input-field" id="storage-nfs-mount" placeholder="/mnt/nfs-docs">
+            </div>
+            <div class="form-group">
+              <label>NFS Version</label>
+              <select class="input-field" id="storage-nfs-version">
+                <option value="4">NFS v4 (recommended)</option>
+                <option value="3">NFS v3</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- SMB fields -->
+          <div class="storage-fields" id="fields-smb">
+            <div class="form-group">
+              <label>Server IP Address</label>
+              <input class="input-field" id="storage-smb-ip" placeholder="192.168.1.200">
+            </div>
+            <div class="form-group">
+              <label>Share Name</label>
+              <input class="input-field" id="storage-smb-share" placeholder="Documents">
+            </div>
+            <div class="form-group">
+              <label>Username</label>
+              <input class="input-field" id="storage-smb-user" placeholder="guest">
+            </div>
+            <div class="form-group">
+              <label>Password</label>
+              <input class="input-field" id="storage-smb-pass" type="password" placeholder="(leave blank for guest)">
+            </div>
+            <div class="form-group">
+              <label>Domain (optional)</label>
+              <input class="input-field" id="storage-smb-domain" placeholder="WORKGROUP">
+            </div>
+            <div class="form-group">
+              <label>Local Mount Point</label>
+              <input class="input-field" id="storage-smb-mount" placeholder="/mnt/smb-docs">
+            </div>
+          </div>
+
+          <!-- S3 fields -->
+          <div class="storage-fields" id="fields-s3">
+            <div class="form-group">
+              <label>Bucket Name</label>
+              <input class="input-field" id="storage-s3-bucket" placeholder="my-docs-bucket">
+            </div>
+            <div class="form-group">
+              <label>Region</label>
+              <input class="input-field" id="storage-s3-region" placeholder="us-east-1">
+            </div>
+            <div class="form-group">
+              <label>Access Key</label>
+              <input class="input-field" id="storage-s3-key" placeholder="AKIA...">
+            </div>
+            <div class="form-group">
+              <label>Secret Key</label>
+              <input class="input-field" id="storage-s3-secret" type="password" placeholder="">
+            </div>
+            <div class="form-group">
+              <label>Local Mount Point</label>
+              <input class="input-field" id="storage-s3-mount" placeholder="/mnt/s3-docs">
+            </div>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:16px;">
+            <button class="btn btn-primary" onclick="addStorage()">Add &amp; Mount</button>
+            <button class="btn btn-ghost" onclick="testStorage()">Test Connection</button>
+          </div>
+          <div id="storage-result" style="margin-top:10px; font-size:12px; color:var(--text2);"></div>
         </div>
-        <div class="card">
-          <h3>Cloud Providers (API Keys)</h3>
-          <div class="field">
-            <label>Groq API Key</label>
-            <input id="set-groq-key" type="password" placeholder="gsk_...">
-          </div>
-          <div class="field">
-            <label>OpenAI API Key</label>
-            <input id="set-openai-key" type="password" placeholder="sk-...">
-          </div>
-          <div class="field">
-            <label>Anthropic API Key</label>
-            <input id="set-anthropic-key" type="password" placeholder="sk-ant-...">
-          </div>
-          <div class="field">
-            <label>Together API Key</label>
-            <input id="set-together-key" type="password" placeholder="">
-          </div>
-          <div class="field">
-            <label>Cerebras API Key</label>
-            <input id="set-cerebras-key" type="password" placeholder="">
-          </div>
-          <div class="field">
-            <label>OpenRouter API Key</label>
-            <input id="set-openrouter-key" type="password" placeholder="">
-          </div>
-          <div class="field">
-            <label>Fireworks API Key</label>
-            <input id="set-fireworks-key" type="password" placeholder="">
-          </div>
-        </div>
-        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
       </div>
     </div>
 
+    <!-- SETTINGS PANEL -->
+    <div class="panel" id="panel-settings">
+      <div class="panel-content">
+        <div class="panel-section">
+          <h3>Active LLM Model</h3>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+            Choose which model to use for chat. Applied immediately.
+          </p>
+          <div class="form-row">
+            <select class="select input-field" id="settings-model-select" style="flex:1; height:34px;"></select>
+            <button class="btn btn-primary" onclick="applyModel()">Apply</button>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Pull LLM Model</h3>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+            Download a model from <a href="https://ollama.com/library" target="_blank" style="color:var(--accent)">ollama.com/library</a> for chat/generation.
+          </p>
+          <div class="form-row">
+            <input class="input-field" id="pull-llm-name" type="text"
+              placeholder="e.g. llama3.1:8b · mistral:7b · phi4-mini" />
+            <button class="btn btn-primary" id="pull-llm-btn" onclick="pullModel('llm')">Pull</button>
+          </div>
+          <div class="log-box" id="pull-llm-log" style="margin-top:14px; display:none; color:var(--text2);"></div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Pull Embedding Model</h3>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+            Download an embedding model for document ingestion. Default: <code style="color:var(--accent)">nomic-embed-text</code>
+          </p>
+          <div class="form-row">
+            <input class="input-field" id="pull-embed-name" type="text"
+              placeholder="e.g. nomic-embed-text · mxbai-embed-large · all-minilm" />
+            <button class="btn btn-primary" id="pull-embed-btn" onclick="pullModel('embed')">Pull</button>
+          </div>
+          <div class="log-box" id="pull-embed-log" style="margin-top:14px; display:none; color:var(--text2);"></div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Ollama Configuration</h3>
+          <div class="form-group">
+            <label>Ollama Host URL</label>
+            <input class="input-field" id="set-ollama-host" placeholder="http://localhost:11434">
+          </div>
+          <div class="form-group">
+            <label>Default Embedding Model</label>
+            <input class="input-field" id="set-embed-model" placeholder="nomic-embed-text">
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>Cloud Providers (API Keys)</h3>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+            Add API keys to enable cloud models in the model dropdown.
+          </p>
+          <div class="form-group">
+            <label>Groq API Key</label>
+            <input class="input-field" id="set-groq-key" type="password" placeholder="gsk_...">
+          </div>
+          <div class="form-group">
+            <label>OpenAI API Key</label>
+            <input class="input-field" id="set-openai-key" type="password" placeholder="sk-...">
+          </div>
+          <div class="form-group">
+            <label>Anthropic API Key</label>
+            <input class="input-field" id="set-anthropic-key" type="password" placeholder="sk-ant-...">
+          </div>
+          <div class="form-group">
+            <label>Together AI API Key</label>
+            <input class="input-field" id="set-together-key" type="password" placeholder="">
+          </div>
+          <div class="form-group">
+            <label>Cerebras API Key</label>
+            <input class="input-field" id="set-cerebras-key" type="password" placeholder="">
+          </div>
+          <div class="form-group">
+            <label>OpenRouter API Key</label>
+            <input class="input-field" id="set-openrouter-key" type="password" placeholder="">
+          </div>
+          <div class="form-group">
+            <label>Fireworks API Key</label>
+            <input class="input-field" id="set-fireworks-key" type="password" placeholder="">
+          </div>
+          <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end .main -->
+</div><!-- end .app -->
+
+<!-- Source Modal -->
+<div class="modal-overlay" id="source-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Source</div>
+      <button class="modal-close" onclick="closeModal()">&#215;</button>
+    </div>
+    <div class="modal-body">
+      <div class="source-preview" id="modal-body"></div>
+    </div>
   </div>
 </div>
 
 <!-- Upload Skill Modal -->
-<div id="upload-modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;">
-  <div class="card" style="width:500px;max-height:80vh;overflow-y:auto;">
-    <h3>Upload Skill</h3>
-    <div class="field">
-      <label>Filename</label>
-      <input id="upload-filename" placeholder="my-skill.md">
+<div class="modal-overlay" id="upload-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Upload Skill</div>
+      <button class="modal-close" onclick="closeUploadModal()">&#215;</button>
     </div>
-    <div class="field">
-      <label>Skill Content (Markdown with YAML frontmatter)</label>
-      <textarea id="upload-content" style="min-height:200px;" placeholder="---
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Filename</label>
+        <input class="input-field" id="upload-filename" placeholder="my-skill.md">
+      </div>
+      <div class="form-group">
+        <label>Skill Content (YAML frontmatter + Markdown)</label>
+        <textarea class="input-field" id="upload-content" rows="12" placeholder="---
 name: My Skill
 version: 1.0.0
-description: Does something useful
+description: What this skill does
 ---
 
 Instructions for the AI..."></textarea>
-    </div>
-    <div style="display:flex;gap:10px;">
+      </div>
       <button class="btn btn-primary" onclick="uploadSkill()">Upload</button>
-      <button class="btn btn-secondary" onclick="hideUploadSkill()">Cancel</button>
     </div>
   </div>
 </div>
 
-<script src="/static/js/app.js"></script>
+<!-- Toasts -->
+<div class="toast-container" id="toasts"></div>
+
+<script>
+// ── State ────────────────────────────────────────────
+let ws = null;
+let isStreaming = false;
+let currentModel = '';
+let statusData = {};
+let currentSources = [];
+let currentAnswer = '';
+let currentMsgId = null;
+let selectedSkill = null;
+
+// ── Init ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  refreshStatus();
+  loadModels();
+  connectWS();
+  setInterval(refreshStatus, 30000);
+});
+
+// ── WebSocket ─────────────────────────────────────────
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/chat`);
+  ws.onmessage = (e) => handleWSMessage(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onerror = () => ws.close();
+}
+
+function handleWSMessage(data) {
+  if (data.type === 'sources') {
+    currentSources = data.sources || [];
+  } else if (data.type === 'token') {
+    appendToken(data.token);
+  } else if (data.type === 'done') {
+    finishStreaming(data);
+  } else if (data.type === 'error') {
+    finishStreaming(null);
+    toast(data.message, 'error');
+  }
+}
+
+// ── Status ────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/status');
+    statusData = await r.json();
+
+    setDot('dot-ollama', statusData.ollama.running ? 'green' : 'red');
+    setDot('dot-vector', statusData.vectorstore.chunks > 0 ? 'green' : statusData.vectorstore.exists ? 'yellow' : 'red');
+    const hasSources = statusData.storage && statusData.storage.sources && statusData.storage.sources.length > 0;
+    setDot('dot-storage', hasSources ? 'green' : 'yellow');
+
+    document.getElementById('stat-chunks').textContent = fmtNum(statusData.vectorstore.chunks);
+    document.getElementById('stat-docs').textContent = fmtNum(statusData.storage.doc_count || 0);
+    document.getElementById('ingest-chunks').textContent = fmtNum(statusData.vectorstore.chunks);
+    document.getElementById('ingest-files').textContent = fmtNum(statusData.sources.length);
+    document.getElementById('ingest-docs').textContent = fmtNum(statusData.storage.doc_count || 0);
+
+    // Sources list
+    const list = document.getElementById('sources-list');
+    if (statusData.sources.length === 0) {
+      list.innerHTML = '<li style="color:var(--text3)">No files ingested yet</li>';
+    } else {
+      list.innerHTML = statusData.sources.map(s => `<li title="${s}">${s}</li>`).join('');
+    }
+  } catch(e) {
+    setDot('dot-ollama', 'red');
+  }
+}
+
+// ── Models (provider-prefixed) ────────────────────────
+async function loadModels() {
+  try {
+    const r = await fetch('/api/models');
+    const data = await r.json();
+    const models = data.models || [];
+
+    const sel = document.getElementById('model-select');
+    const settingsSel = document.getElementById('settings-model-select');
+    sel.innerHTML = '';
+    settingsSel.innerHTML = '';
+
+    if (models.length === 0) {
+      sel.innerHTML = '<option value="">No models available</option>';
+      settingsSel.innerHTML = '<option value="">No models available</option>';
+      return;
+    }
+
+    models.forEach(m => {
+      const opt1 = document.createElement('option');
+      opt1.value = m.id;
+      opt1.textContent = m.label;
+      sel.appendChild(opt1);
+
+      const opt2 = document.createElement('option');
+      opt2.value = m.id;
+      opt2.textContent = m.label;
+      settingsSel.appendChild(opt2);
+    });
+
+    currentModel = sel.value;
+  } catch(e) {
+    console.error('Failed to load models', e);
+  }
+}
+
+function setDot(id, cls) {
+  const el = document.getElementById(id);
+  if (el) el.className = 'dot ' + cls;
+}
+
+function fmtNum(n) {
+  if (n >= 1000) return (n/1000).toFixed(1) + 'k';
+  return String(n || 0);
+}
+
+// ── Chat ──────────────────────────────────────────────
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+function sendSuggestion(el) {
+  document.getElementById('chat-input').value = el.textContent;
+  sendMessage();
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const question = input.value.trim();
+  if (!question || isStreaming) return;
+
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.style.display = 'none';
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  renderMessage('user', question);
+  const assistantId = 'msg-' + Date.now();
+  renderMessage('assistant', '', assistantId);
+
+  isStreaming = true;
+  setSendDisabled(true);
+
+  currentModel = document.getElementById('model-select').value;
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ question, model: currentModel }));
+  } else {
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, model: currentModel })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Request failed');
+      currentAnswer = data.answer || '';
+      currentSources = data.sources || [];
+      finishStreaming(data);
+    } catch(e) {
+      const bubble = document.querySelector(`#${assistantId} .msg-bubble`);
+      if (bubble) bubble.textContent = 'Error: ' + e.message;
+      finishStreaming(null);
+    }
+  }
+}
+
+function renderMessage(role, content, id) {
+  const area = document.getElementById('chat-area');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  if (id) div.id = id;
+
+  const avatar = role === 'user' ? '&#128100;' : '&#9889;';
+  div.innerHTML = `
+    <div class="msg-avatar">${avatar}</div>
+    <div class="msg-body">
+      <div class="msg-bubble">${content}${role === 'assistant' && !content ? '<span class="cursor"></span>' : ''}</div>
+      ${role === 'assistant' ? `<div class="msg-meta" id="${id ? id+'-meta' : ''}"></div>` : ''}
+    </div>
+  `;
+
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+  if (id) currentMsgId = id;
+}
+
+function appendToken(token) {
+  if (!currentMsgId) return;
+  const bubble = document.querySelector(`#${currentMsgId} .msg-bubble`);
+  if (!bubble) return;
+
+  currentAnswer += token;
+  const cursor = bubble.querySelector('.cursor');
+  if (cursor) cursor.remove();
+  bubble.textContent = currentAnswer;
+  const cur = document.createElement('span');
+  cur.className = 'cursor';
+  bubble.appendChild(cur);
+
+  document.getElementById('chat-area').scrollTop = 999999;
+}
+
+function finishStreaming(data) {
+  isStreaming = false;
+  setSendDisabled(false);
+
+  if (currentMsgId) {
+    const bubble = document.querySelector(`#${currentMsgId} .msg-bubble`);
+    if (bubble) bubble.innerHTML = mdToHtml(currentAnswer);
+
+    if (currentSources.length > 0) renderSources(currentSources, currentMsgId);
+
+    if (data && data.model) {
+      const meta = document.getElementById(currentMsgId + '-meta');
+      if (meta) {
+        let timingStr = '';
+        if (data.timing) {
+          const rMs = data.timing.retrieve_ms;
+          const gMs = data.timing.generate_ms;
+          const rStr = rMs >= 1000 ? (rMs/1000).toFixed(1)+'s' : rMs+'ms';
+          const gStr = gMs >= 1000 ? (gMs/1000).toFixed(1)+'s' : gMs+'ms';
+          timingStr = ` · ${rStr} retrieve · ${gStr} generate`;
+        }
+        meta.textContent = `${data.model} · ${data.chunks_searched || 0} chunks${timingStr}`;
+      }
+    }
+  }
+
+  currentAnswer = '';
+  currentSources = [];
+  document.getElementById('chat-input').focus();
+}
+
+function renderSources(sources, msgId) {
+  if (!sources || sources.length === 0) return;
+  const id = msgId || currentMsgId;
+  if (!id) return;
+
+  const seen = new Set();
+  const unique = sources.filter(s => { if (seen.has(s.filename)) return false; seen.add(s.filename); return true; });
+
+  const chips = document.createElement('div');
+  chips.className = 'source-chips';
+  unique.forEach(s => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = s.filename;
+    chip.onclick = () => showSourceModal(s);
+    chips.appendChild(chip);
+  });
+
+  const bubble = document.querySelector(`#${id} .msg-bubble`);
+  if (bubble) bubble.after(chips);
+}
+
+function setSendDisabled(disabled) {
+  const btn = document.getElementById('send-btn');
+  const input = document.getElementById('chat-input');
+  btn.disabled = disabled;
+  input.disabled = disabled;
+  btn.innerHTML = disabled ? '<div class="spinner" style="width:16px;height:16px;border-width:2px;border-top-color:#fff"></div>' : '&#10148;';
+}
+
+// ── Markdown renderer ──────────────────────────────────
+function mdToHtml(text) {
+  if (!text) return '';
+  let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  s = s.replace(/```[\s\S]*?```/g, m => { const inner = m.slice(3, -3).replace(/^\w*\n/, ''); return `<pre><code>${inner}</code></pre>`; });
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  s = s.replace(/((?:^[ \t]*[-*][ \t].+\n?)+)/gm, block => {
+    const items = block.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*[-*][ \t]/, '').trim()}</li>`).join('');
+    return `<ul>${items}</ul>`;
+  });
+  s = s.replace(/((?:^[ \t]*\d+\.[ \t].+\n?)+)/gm, block => {
+    const items = block.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*\d+\.[ \t]/, '').trim()}</li>`).join('');
+    return `<ol>${items}</ol>`;
+  });
+  s = s.split(/\n{2,}/).map(para => {
+    para = para.trim();
+    if (!para) return '';
+    if (/^<(ul|ol|pre|li)/.test(para)) return para;
+    return `<p>${para.replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+  return s;
+}
+
+// ── Ingest ────────────────────────────────────────────
+async function runIngest() {
+  const folder = document.getElementById('ingest-folder').value.trim() || null;
+  const rebuild = document.getElementById('ingest-rebuild').checked;
+  const btn = document.getElementById('ingest-btn');
+  const log = document.getElementById('ingest-log');
+
+  btn.disabled = true; btn.textContent = 'Ingesting...';
+  log.textContent = `Starting ingestion${folder ? ' from ' + folder : ''}...\n`;
+
+  try {
+    const r = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, rebuild })
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      log.textContent += '\nError: ' + (data.detail || r.statusText);
+      toast('Ingestion failed', 'error');
+    } else if (data.success) {
+      log.textContent += data.output || 'Done.';
+      log.textContent += `\n\nIngestion complete. Vector store: ${data.chunks} chunks.`;
+      toast('Ingestion complete!', 'success');
+    } else {
+      log.textContent += '\nError: ' + (data.error || 'Unknown error');
+      toast('Ingestion failed', 'error');
+    }
+    refreshStatus();
+  } catch(e) {
+    log.textContent += '\nError: ' + e.message;
+    toast('Request failed', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Start Ingest';
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+// ── Vector Store ──────────────────────────────────────
+async function clearVectorStore() {
+  if (!confirm('Clear the entire vector store? You will need to re-ingest.')) return;
+  try {
+    const r = await fetch('/api/vectorstore', { method: 'DELETE' });
+    const data = await r.json();
+    toast(data.message, 'success');
+    refreshStatus();
+  } catch(e) {
+    toast('Failed to clear', 'error');
+  }
+}
+
+// ── Storage ───────────────────────────────────────────
+function toggleStorageFields() {
+  const type = document.getElementById('storage-type').value;
+  document.querySelectorAll('.storage-fields').forEach(el => el.classList.remove('active'));
+  const fields = document.getElementById(`fields-${type}`);
+  if (fields) fields.classList.add('active');
+}
+
+async function loadStorage() {
+  try {
+    const r = await fetch('/api/storage');
+    const data = await r.json();
+    const tbody = document.getElementById('storage-tbody');
+    if (!data.sources || data.sources.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text3);text-align:center;padding:20px;">No storage sources configured</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.sources.map((s, i) => `
+      <tr>
+        <td><span class="type-badge type-${s.type}">${s.type.toUpperCase()}</span></td>
+        <td>${s.label}</td>
+        <td style="font-family:monospace;font-size:12px;">${s.path}</td>
+        <td>${s.role}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="removeStorage(${i})">Remove</button></td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    console.error('Failed to load storage', e);
+  }
+}
+
+async function addStorage() {
+  const type = document.getElementById('storage-type').value;
+  const label = document.getElementById('storage-label').value.trim();
+  if (!label) { toast('Label is required', 'error'); return; }
+
+  const body = { type, label };
+
+  if (type === 'local') {
+    body.path = document.getElementById('storage-local-path').value.trim();
+    if (!body.path) { toast('Path is required', 'error'); return; }
+  } else if (type === 'nfs') {
+    body.server_ip = document.getElementById('storage-nfs-ip').value.trim();
+    body.export_path = document.getElementById('storage-nfs-export').value.trim();
+    body.mount_point = document.getElementById('storage-nfs-mount').value.trim();
+    body.nfs_version = document.getElementById('storage-nfs-version').value;
+    if (!body.server_ip || !body.export_path || !body.mount_point) {
+      toast('All NFS fields are required', 'error'); return;
+    }
+  } else if (type === 'smb') {
+    body.server_ip = document.getElementById('storage-smb-ip').value.trim();
+    body.share_name = document.getElementById('storage-smb-share').value.trim();
+    body.username = document.getElementById('storage-smb-user').value.trim() || 'guest';
+    body.password = document.getElementById('storage-smb-pass').value;
+    body.domain = document.getElementById('storage-smb-domain').value.trim();
+    body.mount_point = document.getElementById('storage-smb-mount').value.trim();
+    if (!body.server_ip || !body.share_name || !body.mount_point) {
+      toast('Server IP, Share Name, and Mount Point are required', 'error'); return;
+    }
+  } else if (type === 's3') {
+    body.bucket = document.getElementById('storage-s3-bucket').value.trim();
+    body.region = document.getElementById('storage-s3-region').value.trim();
+    body.access_key = document.getElementById('storage-s3-key').value.trim();
+    body.secret_key = document.getElementById('storage-s3-secret').value;
+    body.mount_point = document.getElementById('storage-s3-mount').value.trim();
+    if (!body.bucket || !body.mount_point) {
+      toast('Bucket and Mount Point are required', 'error'); return;
+    }
+  }
+
+  const resultEl = document.getElementById('storage-result');
+  resultEl.textContent = 'Adding storage source...';
+  resultEl.style.color = 'var(--text2)';
+
+  try {
+    const r = await fetch('/api/storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      resultEl.textContent = 'Error: ' + (data.detail || 'Failed');
+      resultEl.style.color = 'var(--red)';
+      toast('Failed to add storage', 'error');
+    } else {
+      resultEl.textContent = 'Storage source added successfully!';
+      resultEl.style.color = 'var(--green)';
+      toast('Storage added!', 'success');
+      loadStorage();
+      refreshStatus();
+    }
+  } catch(e) {
+    resultEl.textContent = 'Error: ' + e.message;
+    resultEl.style.color = 'var(--red)';
+  }
+}
+
+async function testStorage() {
+  const type = document.getElementById('storage-type').value;
+  const body = { type, label: 'test' };
+
+  if (type === 'local') {
+    body.path = document.getElementById('storage-local-path').value.trim();
+  } else if (type === 'nfs') {
+    body.server_ip = document.getElementById('storage-nfs-ip').value.trim();
+  } else if (type === 'smb') {
+    body.server_ip = document.getElementById('storage-smb-ip').value.trim();
+  }
+
+  const resultEl = document.getElementById('storage-result');
+  resultEl.textContent = 'Testing...';
+  resultEl.style.color = 'var(--text2)';
+
+  try {
+    const r = await fetch('/api/storage/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+    resultEl.textContent = data.message;
+    resultEl.style.color = data.reachable ? 'var(--green)' : 'var(--red)';
+  } catch(e) {
+    resultEl.textContent = 'Test failed: ' + e.message;
+    resultEl.style.color = 'var(--red)';
+  }
+}
+
+async function removeStorage(index) {
+  if (!confirm('Remove this storage source?')) return;
+  try {
+    await fetch(`/api/storage/${index}`, { method: 'DELETE' });
+    toast('Storage source removed', 'success');
+    loadStorage();
+    refreshStatus();
+  } catch(e) {
+    toast('Failed to remove', 'error');
+  }
+}
+
+// ── Skills / Generate ─────────────────────────────────
+async function loadSkills() {
+  try {
+    const r = await fetch('/api/skills');
+    const data = await r.json();
+    const grid = document.getElementById('skills-grid');
+
+    if (!data.skills || data.skills.length === 0) {
+      grid.innerHTML = '<p style="color:var(--text3);">No skills available. Upload a skill to get started.</p>';
+      return;
+    }
+
+    grid.innerHTML = data.skills.map(s => `
+      <div class="skill-card" onclick="selectSkill('${s.name}', '${s.description.replace(/'/g, "\\'")}')">
+        <h4>${s.name}</h4>
+        <p>${s.description}</p>
+        <div class="skill-tags">
+          ${(s.tags || []).map(t => `<span class="skill-tag">${t}</span>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {
+    console.error('Failed to load skills', e);
+  }
+}
+
+function selectSkill(name, desc) {
+  selectedSkill = name;
+  document.getElementById('gen-skill-title').textContent = name;
+  document.getElementById('gen-skill-desc').textContent = desc;
+  document.getElementById('gen-form-section').style.display = 'block';
+  document.getElementById('gen-output-section').style.display = 'none';
+  document.getElementById('gen-input').value = '';
+  document.getElementById('gen-input').focus();
+}
+
+function backToSkills() {
+  selectedSkill = null;
+  document.getElementById('gen-form-section').style.display = 'none';
+  document.getElementById('gen-output-section').style.display = 'none';
+}
+
+async function runGenerate() {
+  if (!selectedSkill) return;
+  const input = document.getElementById('gen-input').value.trim();
+  if (!input) { toast('Enter a request', 'error'); return; }
+
+  const btn = document.getElementById('gen-btn');
+  btn.disabled = true; btn.textContent = 'Generating...';
+
+  try {
+    const r = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, skill_name: selectedSkill })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Generation failed');
+
+    document.getElementById('gen-output-section').style.display = 'block';
+    document.getElementById('gen-output').innerHTML = mdToHtml(data.content);
+    toast('Document generated!', 'success');
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate';
+  }
+}
+
+function showUploadSkillModal() {
+  document.getElementById('upload-modal').classList.add('open');
+}
+
+function closeUploadModal() {
+  document.getElementById('upload-modal').classList.remove('open');
+}
+
+async function uploadSkill() {
+  const filename = document.getElementById('upload-filename').value.trim();
+  const content = document.getElementById('upload-content').value;
+  if (!filename || !content) { toast('Filename and content required', 'error'); return; }
+
+  try {
+    const r = await fetch('/api/skills/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, content })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Upload failed');
+    toast('Skill uploaded!', 'success');
+    closeUploadModal();
+    loadSkills();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ── Settings ──────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const r = await fetch('/api/settings');
+    const data = await r.json();
+    const cfg = data.settings || {};
+
+    document.getElementById('set-ollama-host').value = cfg.ollama_host || '';
+    document.getElementById('set-embed-model').value = cfg.embed_model || '';
+    document.getElementById('set-groq-key').value = cfg.groq_api_key || '';
+    document.getElementById('set-openai-key').value = cfg.openai_api_key || '';
+    document.getElementById('set-anthropic-key').value = cfg.anthropic_api_key || '';
+    document.getElementById('set-together-key').value = cfg.together_api_key || '';
+    document.getElementById('set-cerebras-key').value = cfg.cerebras_api_key || '';
+    document.getElementById('set-openrouter-key').value = cfg.openrouter_api_key || '';
+    document.getElementById('set-fireworks-key').value = cfg.fireworks_api_key || '';
+  } catch(e) {
+    console.error('Failed to load settings', e);
+  }
+}
+
+async function saveSettings() {
+  const settings = {};
+  const fields = [
+    ['set-ollama-host', 'ollama_host'],
+    ['set-embed-model', 'embed_model'],
+    ['set-groq-key', 'groq_api_key'],
+    ['set-openai-key', 'openai_api_key'],
+    ['set-anthropic-key', 'anthropic_api_key'],
+    ['set-together-key', 'together_api_key'],
+    ['set-cerebras-key', 'cerebras_api_key'],
+    ['set-openrouter-key', 'openrouter_api_key'],
+    ['set-fireworks-key', 'fireworks_api_key'],
+  ];
+
+  fields.forEach(([elId, key]) => {
+    const val = document.getElementById(elId).value.trim();
+    if (val && !val.startsWith('***')) settings[key] = val;
+  });
+
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings })
+    });
+    const data = await r.json();
+    if (data.success) {
+      toast('Settings saved!', 'success');
+      loadModels();
+    } else {
+      toast('Failed to save settings', 'error');
+    }
+  } catch(e) {
+    toast('Request failed: ' + e.message, 'error');
+  }
+}
+
+async function applyModel() {
+  const model = document.getElementById('settings-model-select').value;
+  if (!model) { toast('Select a model first', 'error'); return; }
+
+  const modelName = model.includes(':') ? model.split(':', 2)[1] : model;
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: { llm_model: modelName } })
+    });
+    const data = await r.json();
+    if (data.success) {
+      currentModel = model;
+      document.getElementById('model-select').value = model;
+      toast(`Model set to ${model}`, 'success');
+    }
+  } catch(e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── Model Pull ────────────────────────────────────────
+async function pullModel(type) {
+  const inputId = type === 'embed' ? 'pull-embed-name' : 'pull-llm-name';
+  const btnId = type === 'embed' ? 'pull-embed-btn' : 'pull-llm-btn';
+  const logId = type === 'embed' ? 'pull-embed-log' : 'pull-llm-log';
+
+  const modelName = document.getElementById(inputId).value.trim();
+  if (!modelName) { toast('Enter a model name', 'error'); return; }
+
+  const btn = document.getElementById(btnId);
+  const log = document.getElementById(logId);
+  btn.disabled = true; btn.textContent = 'Pulling...';
+  log.style.display = 'block';
+  log.textContent = `Pulling ${modelName}...\n`;
+
+  try {
+    const r = await fetch('/api/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelName })
+    });
+    if (!r.ok) throw new Error(`Server error ${r.status}`);
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      log.textContent += decoder.decode(value, { stream: true });
+      log.scrollTop = log.scrollHeight;
+    }
+    log.textContent += '\nDone!';
+    toast(`${modelName} pulled successfully`, 'success');
+    loadModels();
+
+    if (type === 'embed') {
+      document.getElementById('set-embed-model').value = modelName;
+    }
+  } catch(e) {
+    log.textContent += '\nError: ' + e.message;
+    toast('Pull failed', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Pull';
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+// ── Tabs ──────────────────────────────────────────────
+function switchTab(tab) {
+  const tabs = ['chat', 'generate', 'ingest', 'storage', 'settings'];
+  tabs.forEach(t => {
+    const panel = document.getElementById(`panel-${t}`);
+    const btn = document.getElementById(`tab-${t}`);
+    if (panel) { panel.style.display = t === tab ? 'flex' : 'none'; panel.classList.toggle('active', t === tab); }
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
+
+  if (tab === 'generate') loadSkills();
+  if (tab === 'storage') loadStorage();
+  if (tab === 'settings') { loadSettings(); loadModels(); }
+  if (tab === 'ingest') refreshStatus();
+}
+
+// ── Source Modal ──────────────────────────────────────
+function showSourceModal(source) {
+  document.getElementById('modal-title').textContent = source.filename + (source.page ? ` — Page ${source.page}` : '');
+  document.getElementById('modal-body').textContent = source.preview;
+  document.getElementById('source-modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('source-modal').classList.remove('open');
+}
+
+document.getElementById('source-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+document.getElementById('upload-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeUploadModal();
+});
+
+// ── Toasts ────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icon = type === 'success' ? '&#10003;' : type === 'error' ? '&#10007;' : '&#8505;';
+  el.innerHTML = `<span>${icon}</span><span>${msg}</span>`;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+</script>
 </body>
 </html>

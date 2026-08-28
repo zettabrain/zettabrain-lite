@@ -630,6 +630,11 @@
     </div>
     <div class="modal-body">
       <div class="form-group">
+        <label>Choose a skill file (.md)</label>
+        <input type="file" class="input-field" id="upload-file-picker" accept=".md,.markdown,.txt" onchange="handleSkillFileSelect(event)" style="padding:8px;">
+        <p style="font-size:11px; color:var(--text3); margin-top:6px;">Select a Markdown file with YAML frontmatter, or paste content below manually.</p>
+      </div>
+      <div class="form-group">
         <label>Filename</label>
         <input class="input-field" id="upload-filename" placeholder="my-skill.md">
       </div>
@@ -1213,10 +1218,29 @@ async function runGenerate() {
 
 function showUploadSkillModal() {
   document.getElementById('upload-modal').classList.add('open');
+  document.getElementById('upload-file-picker').value = '';
+  document.getElementById('upload-filename').value = '';
+  document.getElementById('upload-content').value = '';
 }
 
 function closeUploadModal() {
   document.getElementById('upload-modal').classList.remove('open');
+}
+
+function handleSkillFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  document.getElementById('upload-filename').value = file.name;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('upload-content').value = e.target.result;
+  };
+  reader.onerror = function() {
+    toast('Failed to read file', 'error');
+  };
+  reader.readAsText(file);
 }
 
 async function uploadSkill() {

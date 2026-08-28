@@ -7,7 +7,7 @@ name = "zettabrain-lite"
 version = "0.1.0"
 description = "ZettaBrain Lite — Free local AI RAG + Skills platform"
 readme = "README.md"
-license = {text = "Proprietary"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 authors = [{name = "Olajide Shobowale"}]
 

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZettaBrain Lite</title>
+<link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <svg viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="url(#g1)"/><defs><linearGradient id="g1" x1="0" y1="0" x2="32" y2="32"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><circle cx="16" cy="16" r="3" fill="white"/><circle cx="10" cy="10" r="2" fill="white" opacity="0.8"/><circle cx="22" cy="22" r="2" fill="white" opacity="0.8"/><path d="M10 10L16 16M16 16L22 22" stroke="white" stroke-width="1.2" opacity="0.5"/></svg>
+      <span>ZettaBrain Lite</span>
+    </div>
+
+    <div class="sidebar-section">Mode</div>
+    <button class="nav-item active" id="nav-chat" onclick="showTab('chat')">
+      <span>&#128172;</span> Chat (RAG)
+    </button>
+    <button class="nav-item" id="nav-generate" onclick="showTab('generate')">
+      <span>&#10024;</span> Generate (Skills)
+    </button>
+
+    <div class="sidebar-section">Manage</div>
+    <button class="nav-item" id="nav-storage" onclick="showTab('storage')">
+      <span>&#128193;</span> Storage Sources
+    </button>
+    <button class="nav-item" id="nav-ingest" onclick="showTab('ingest')">
+      <span>&#128229;</span> Ingestion
+    </button>
+    <button class="nav-item" id="nav-settings" onclick="showTab('settings')">
+      <span>&#9881;</span> Settings
+    </button>
+
+    <div style="flex:1"></div>
+    <div style="padding:8px 12px; font-size:0.7rem; color:var(--muted);">
+      <span id="status-dot" class="dot dot-red"></span>
+      <span id="status-text">Checking...</span>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main">
+
+    <!-- ═══ CHAT TAB ═══ -->
+    <div id="tab-chat">
+      <div class="header">
+        <h2>Document Q&A</h2>
+        <div style="font-size:0.78rem; color:var(--muted);">
+          <span id="chunk-count">0</span> chunks indexed
+        </div>
+      </div>
+      <div class="chat-container" id="chat-messages"></div>
+      <div class="input-bar">
+        <select id="model-select" title="Select model"></select>
+        <input type="text" id="chat-input" placeholder="Ask a question about your documents..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn btn-primary" onclick="sendChat()">Send</button>
+      </div>
+    </div>
+
+    <!-- ═══ GENERATE TAB ═══ -->
+    <div id="tab-generate" class="hidden">
+      <div class="header">
+        <h2>Generate Documents</h2>
+        <button class="btn btn-sm btn-secondary" onclick="showUploadSkill()">Upload Skill</button>
+      </div>
+      <div class="panel">
+        <div id="skills-list" class="skills-grid"></div>
+        <div id="generate-form" class="hidden" style="max-width:700px;">
+          <div class="card">
+            <h3 id="gen-skill-name"></h3>
+            <p id="gen-skill-desc" style="color:var(--muted); font-size:0.82rem; margin-bottom:16px;"></p>
+            <div class="field">
+              <label>Your request</label>
+              <textarea id="gen-input" placeholder="Describe what you want to generate..."></textarea>
+            </div>
+            <div style="display:flex; gap:10px;">
+              <button class="btn btn-primary" onclick="runGenerate()">Generate</button>
+              <button class="btn btn-secondary" onclick="backToSkills()">Back</button>
+            </div>
+          </div>
+          <div id="gen-output" class="card hidden">
+            <h3>Generated Output</h3>
+            <div id="gen-content" style="white-space:pre-wrap; font-size:0.85rem; line-height:1.7;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ STORAGE TAB ═══ -->
+    <div id="tab-storage" class="hidden">
+      <div class="header"><h2>Storage Sources</h2></div>
+      <div class="panel">
+        <div class="card">
+          <h3>Configured Sources</h3>
+          <table>
+            <thead><tr><th>Type</th><th>Label</th><th>Path</th><th>Role</th><th></th></tr></thead>
+            <tbody id="storage-table"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Add Storage Source</h3>
+          <div class="field">
+            <label>Type</label>
+            <select id="storage-type">
+              <option value="local">Local Folder</option>
+              <option value="nfs">NFS Mount</option>
+              <option value="smb">SMB/CIFS Share</option>
+              <option value="s3">S3-Compatible (FUSE mount)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Label</label>
+            <input id="storage-label" placeholder="e.g. Engineering Docs">
+          </div>
+          <div class="field">
+            <label>Path (mount point or local directory)</label>
+            <input id="storage-path" placeholder="/mnt/docs or /home/user/documents">
+          </div>
+          <button class="btn btn-primary" onclick="addStorage()">Add Source</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ INGEST TAB ═══ -->
+    <div id="tab-ingest" class="hidden">
+      <div class="header"><h2>Document Ingestion</h2></div>
+      <div class="panel">
+        <div class="card">
+          <h3>Ingest from Storage Sources</h3>
+          <p style="color:var(--muted); font-size:0.82rem; margin-bottom:16px;">
+            Process documents from your configured storage sources into the vector store for RAG queries.
+          </p>
+          <div id="ingest-sources"></div>
+          <div style="margin-top:16px; display:flex; gap:10px;">
+            <button class="btn btn-primary" onclick="ingestAll()">Ingest All Sources</button>
+            <button class="btn btn-danger btn-sm" onclick="clearVectorstore()">Clear Vector Store</button>
+          </div>
+          <pre id="ingest-output" style="margin-top:16px; background:var(--bg); padding:12px; border-radius:var(--radius); font-size:0.78rem; color:var(--muted); display:none; white-space:pre-wrap;"></pre>
+        </div>
+        <div class="card">
+          <h3>Ingested Files</h3>
+          <div id="ingested-files" style="font-size:0.82rem; color:var(--muted);"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ SETTINGS TAB ═══ -->
+    <div id="tab-settings" class="hidden">
+      <div class="header"><h2>Settings</h2></div>
+      <div class="panel" style="max-width:700px;">
+        <div class="card">
+          <h3>Local LLM (Ollama)</h3>
+          <div class="field">
+            <label>Ollama Host</label>
+            <input id="set-ollama-host" placeholder="http://localhost:11434">
+          </div>
+          <div class="field">
+            <label>Default LLM Model</label>
+            <input id="set-llm-model" placeholder="llama3.1:8b">
+          </div>
+          <div class="field">
+            <label>Embedding Model</label>
+            <input id="set-embed-model" placeholder="nomic-embed-text">
+          </div>
+          <div class="field">
+            <label>Pull a model</label>
+            <div style="display:flex; gap:8px;">
+              <input id="pull-model-name" placeholder="llama3.1:8b" style="flex:1;">
+              <button class="btn btn-sm btn-secondary" onclick="pullModel()">Pull</button>
+            </div>
+            <pre id="pull-output" style="margin-top:8px; font-size:0.75rem; color:var(--muted); display:none;"></pre>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Cloud Providers (API Keys)</h3>
+          <div class="field">
+            <label>Groq API Key</label>
+            <input id="set-groq-key" type="password" placeholder="gsk_...">
+          </div>
+          <div class="field">
+            <label>OpenAI API Key</label>
+            <input id="set-openai-key" type="password" placeholder="sk-...">
+          </div>
+          <div class="field">
+            <label>Anthropic API Key</label>
+            <input id="set-anthropic-key" type="password" placeholder="sk-ant-...">
+          </div>
+          <div class="field">
+            <label>Together API Key</label>
+            <input id="set-together-key" type="password" placeholder="">
+          </div>
+          <div class="field">
+            <label>Cerebras API Key</label>
+            <input id="set-cerebras-key" type="password" placeholder="">
+          </div>
+          <div class="field">
+            <label>OpenRouter API Key</label>
+            <input id="set-openrouter-key" type="password" placeholder="">
+          </div>
+          <div class="field">
+            <label>Fireworks API Key</label>
+            <input id="set-fireworks-key" type="password" placeholder="">
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Upload Skill Modal -->
+<div id="upload-modal" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;">
+  <div class="card" style="width:500px;max-height:80vh;overflow-y:auto;">
+    <h3>Upload Skill</h3>
+    <div class="field">
+      <label>Filename</label>
+      <input id="upload-filename" placeholder="my-skill.md">
+    </div>
+    <div class="field">
+      <label>Skill Content (Markdown with YAML frontmatter)</label>
+      <textarea id="upload-content" style="min-height:200px;" placeholder="---
+name: My Skill
+version: 1.0.0
+description: Does something useful
+---
+
+Instructions for the AI..."></textarea>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-primary" onclick="uploadSkill()">Upload</button>
+      <button class="btn btn-secondary" onclick="hideUploadSkill()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

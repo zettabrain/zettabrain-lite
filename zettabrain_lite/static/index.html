@@ -181,6 +181,36 @@
   @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
   @keyframes fadeUp  { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
+  /* ── Wizard ───────────────────────────────────── */
+  .wizard-steps { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .wizard-step { flex: 1; padding: 10px 8px; text-align: center; font-size: 12px; font-weight: 500; color: var(--text3); border-bottom: 2px solid transparent; transition: all 0.15s; cursor: default; }
+  .wizard-step.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .wizard-step.done { color: var(--green); border-bottom-color: var(--green); }
+  .wizard-step .step-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--bg3); font-size: 11px; margin-right: 4px; }
+  .wizard-step.active .step-num { background: var(--accent); color: #fff; }
+  .wizard-step.done .step-num { background: var(--green); color: #fff; }
+  .wizard-page { display: none; }
+  .wizard-page.active { display: block; }
+  .wizard-nav { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .section-builder { display: flex; flex-direction: column; gap: 8px; }
+  .section-item { display: flex; gap: 8px; align-items: center; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
+  .section-item input { flex: 1; background: none; border: none; color: var(--text); font-size: 13px; outline: none; }
+  .section-item .remove-section { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  .section-item .remove-section:hover { color: var(--red); }
+  .section-item .drag-handle { color: var(--text3); cursor: grab; font-size: 14px; }
+  .add-section-btn { background: none; border: 1px dashed var(--border); color: var(--text3); padding: 8px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+  .add-section-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .tone-options { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tone-chip { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); font-size: 12px; cursor: pointer; transition: all 0.15s; }
+  .tone-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .tone-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .preview-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 16px; font-family: 'Courier New', monospace; font-size: 12px; color: var(--text2); white-space: pre-wrap; max-height: 400px; overflow-y: auto; line-height: 1.6; }
+  .wizard-modal { max-width: 720px; max-height: 90vh; }
+  .industry-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .industry-chip { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); font-size: 12px; cursor: pointer; text-align: center; transition: all 0.15s; }
+  .industry-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .industry-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   /* ── Scrollbar ────────────────────────────────── */
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -321,6 +351,7 @@
         <div class="panel-section">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
             <h3>Document Generation (Skills)</h3>
+            <button class="btn btn-primary btn-sm" onclick="openSkillWizard()">Create Skill</button>
             <button class="btn btn-ghost btn-sm" onclick="showUploadSkillModal()">Upload Skill</button>
           </div>
           <p style="color:var(--text2); font-size:13px; margin-bottom:16px;">
@@ -649,6 +680,130 @@ description: What this skill does
 Instructions for the AI..."></textarea>
       </div>
       <button class="btn btn-primary" onclick="uploadSkill()">Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- Skill Creation Wizard Modal -->
+<div class="modal-overlay" id="wizard-modal">
+  <div class="modal wizard-modal">
+    <div class="modal-header">
+      <div class="modal-title">Create a New Skill</div>
+      <button class="modal-close" onclick="closeSkillWizard()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Step indicators -->
+      <div class="wizard-steps">
+        <div class="wizard-step active" id="wiz-step-1"><span class="step-num">1</span> Basics</div>
+        <div class="wizard-step" id="wiz-step-2"><span class="step-num">2</span> Structure</div>
+        <div class="wizard-step" id="wiz-step-3"><span class="step-num">3</span> Style</div>
+        <div class="wizard-step" id="wiz-step-4"><span class="step-num">4</span> Review</div>
+      </div>
+
+      <!-- Page 1: Basics -->
+      <div class="wizard-page active" id="wiz-page-1">
+        <div class="form-group">
+          <label>Skill Name *</label>
+          <input class="input-field" id="wiz-name" placeholder="e.g. Customer Proposal, Weekly Report, SOW Template">
+        </div>
+        <div class="form-group">
+          <label>Description *</label>
+          <input class="input-field" id="wiz-desc" placeholder="What does this skill generate? One sentence.">
+        </div>
+        <div class="form-group">
+          <label>Industry / Category</label>
+          <div class="industry-grid">
+            <div class="industry-chip" onclick="selectIndustry(this)">IT / DevOps</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Engineering</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Sales</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Legal</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Finance</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">HR</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Healthcare</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Education</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Consulting</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Marketing</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">Operations</div>
+            <div class="industry-chip" onclick="selectIndustry(this)">General</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Tags (comma-separated)</label>
+          <input class="input-field" id="wiz-tags" placeholder="e.g. proposal, client, pricing">
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="wiz-corpus">
+          This skill needs data from ingested documents (corpus-aware)
+        </label>
+      </div>
+
+      <!-- Page 2: Structure -->
+      <div class="wizard-page" id="wiz-page-2">
+        <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+          Define the sections of the generated document. Each section becomes a heading in the output.
+        </p>
+        <div class="section-builder" id="wiz-sections">
+          <!-- Populated by JS -->
+        </div>
+        <button class="add-section-btn" onclick="addWizSection()" style="margin-top:8px;">+ Add Section</button>
+
+        <div class="form-group" style="margin-top:16px;">
+          <label>Custom Instructions (optional)</label>
+          <textarea class="input-field" id="wiz-instructions" rows="4" placeholder="Additional instructions for the AI, e.g. 'Always include pricing from the corpus' or 'Use metric units only'"></textarea>
+        </div>
+      </div>
+
+      <!-- Page 3: Style & Behavior -->
+      <div class="wizard-page" id="wiz-page-3">
+        <div class="form-group">
+          <label>Tone</label>
+          <div class="tone-options" id="wiz-tones">
+            <div class="tone-chip" onclick="selectTone(this)">Professional</div>
+            <div class="tone-chip" onclick="selectTone(this)">Formal</div>
+            <div class="tone-chip" onclick="selectTone(this)">Friendly</div>
+            <div class="tone-chip" onclick="selectTone(this)">Technical</div>
+            <div class="tone-chip" onclick="selectTone(this)">Concise</div>
+            <div class="tone-chip" onclick="selectTone(this)">Persuasive</div>
+            <div class="tone-chip" onclick="selectTone(this)">Neutral</div>
+            <div class="tone-chip" onclick="selectTone(this)">Executive</div>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:16px;">
+          <label>Creativity (Temperature)</label>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <input type="range" id="wiz-temp" min="0" max="10" value="4" style="flex:1; accent-color:var(--accent);" oninput="document.getElementById('wiz-temp-val').textContent = (this.value/10).toFixed(1)">
+            <span id="wiz-temp-val" style="color:var(--text); font-weight:600; min-width:30px;">0.4</span>
+          </div>
+          <p style="font-size:11px; color:var(--text3); margin-top:4px;">Low = predictable, consistent output. High = more creative, varied output.</p>
+        </div>
+        <div class="form-group">
+          <label>Max Output Length</label>
+          <select class="input-field" id="wiz-maxlen">
+            <option value="1000">Short (~1 page)</option>
+            <option value="2000" selected>Medium (~2 pages)</option>
+            <option value="3000">Long (~3 pages)</option>
+            <option value="4000">Very Long (~4+ pages)</option>
+          </select>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="wiz-citations">
+          Require citations from source documents
+        </label>
+      </div>
+
+      <!-- Page 4: Review & Save -->
+      <div class="wizard-page" id="wiz-page-4">
+        <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
+          Review the generated skill file. You can edit it directly before saving.
+        </p>
+        <textarea class="input-field" id="wiz-preview" rows="20" style="font-family:'Courier New',monospace; font-size:12px; line-height:1.6;"></textarea>
+      </div>
+
+      <!-- Navigation -->
+      <div class="wizard-nav">
+        <button class="btn btn-ghost" id="wiz-prev" onclick="wizPrev()" style="visibility:hidden;">Back</button>
+        <button class="btn btn-primary" id="wiz-next" onclick="wizNext()">Next</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1420,6 +1575,226 @@ document.getElementById('source-modal').addEventListener('click', e => {
 });
 document.getElementById('upload-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeUploadModal();
+});
+
+// ── Skill Creation Wizard ─────────────────────────────
+let wizStep = 1;
+let wizSections = [];
+let wizSelectedIndustry = '';
+let wizSelectedTones = [];
+
+function openSkillWizard() {
+  wizStep = 1;
+  wizSections = ['Overview', 'Key Points', 'Details', 'Conclusion'];
+  wizSelectedIndustry = '';
+  wizSelectedTones = [];
+
+  document.getElementById('wiz-name').value = '';
+  document.getElementById('wiz-desc').value = '';
+  document.getElementById('wiz-tags').value = '';
+  document.getElementById('wiz-corpus').checked = false;
+  document.getElementById('wiz-instructions').value = '';
+  document.getElementById('wiz-temp').value = 4;
+  document.getElementById('wiz-temp-val').textContent = '0.4';
+  document.getElementById('wiz-maxlen').value = '2000';
+  document.getElementById('wiz-citations').checked = false;
+
+  document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.tone-chip').forEach(c => c.classList.remove('selected'));
+
+  renderWizSections();
+  updateWizSteps();
+  document.getElementById('wizard-modal').classList.add('open');
+}
+
+function closeSkillWizard() {
+  document.getElementById('wizard-modal').classList.remove('open');
+}
+
+function selectIndustry(el) {
+  document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  wizSelectedIndustry = el.textContent.trim();
+}
+
+function selectTone(el) {
+  el.classList.toggle('selected');
+  wizSelectedTones = Array.from(document.querySelectorAll('.tone-chip.selected')).map(c => c.textContent.trim());
+}
+
+function renderWizSections() {
+  const container = document.getElementById('wiz-sections');
+  container.innerHTML = wizSections.map((s, i) => `
+    <div class="section-item">
+      <span class="drag-handle">&#9776;</span>
+      <input value="${s}" onchange="wizSections[${i}] = this.value" placeholder="Section name">
+      <button class="remove-section" onclick="removeWizSection(${i})" title="Remove">&times;</button>
+    </div>
+  `).join('');
+}
+
+function addWizSection() {
+  wizSections.push('');
+  renderWizSections();
+  const items = document.querySelectorAll('#wiz-sections .section-item input');
+  if (items.length > 0) items[items.length - 1].focus();
+}
+
+function removeWizSection(i) {
+  wizSections.splice(i, 1);
+  renderWizSections();
+}
+
+function updateWizSteps() {
+  for (let i = 1; i <= 4; i++) {
+    const stepEl = document.getElementById(`wiz-step-${i}`);
+    const pageEl = document.getElementById(`wiz-page-${i}`);
+    stepEl.className = 'wizard-step' + (i === wizStep ? ' active' : '') + (i < wizStep ? ' done' : '');
+    pageEl.className = 'wizard-page' + (i === wizStep ? ' active' : '');
+  }
+  document.getElementById('wiz-prev').style.visibility = wizStep === 1 ? 'hidden' : 'visible';
+  const nextBtn = document.getElementById('wiz-next');
+  if (wizStep === 4) {
+    nextBtn.textContent = 'Save Skill';
+  } else {
+    nextBtn.textContent = 'Next';
+  }
+}
+
+function wizNext() {
+  if (wizStep === 1) {
+    const name = document.getElementById('wiz-name').value.trim();
+    const desc = document.getElementById('wiz-desc').value.trim();
+    if (!name) { toast('Skill name is required', 'error'); return; }
+    if (!desc) { toast('Description is required', 'error'); return; }
+  }
+  if (wizStep === 2) {
+    wizSections = wizSections.filter(s => s.trim());
+    if (wizSections.length === 0) { toast('Add at least one section', 'error'); return; }
+  }
+  if (wizStep === 3) {
+    document.getElementById('wiz-preview').value = buildSkillMarkdown();
+  }
+  if (wizStep === 4) {
+    saveWizardSkill();
+    return;
+  }
+  wizStep++;
+  updateWizSteps();
+}
+
+function wizPrev() {
+  if (wizStep > 1) {
+    wizStep--;
+    updateWizSteps();
+  }
+}
+
+function buildSkillMarkdown() {
+  const name = document.getElementById('wiz-name').value.trim();
+  const desc = document.getElementById('wiz-desc').value.trim();
+  const tags = document.getElementById('wiz-tags').value.trim().split(',').map(t => t.trim()).filter(Boolean);
+  const corpus = document.getElementById('wiz-corpus').checked;
+  const temp = (parseInt(document.getElementById('wiz-temp').value) / 10).toFixed(1);
+  const maxTokens = document.getElementById('wiz-maxlen').value;
+  const citations = document.getElementById('wiz-citations').checked;
+  const instructions = document.getElementById('wiz-instructions').value.trim();
+  const industry = wizSelectedIndustry || 'General';
+  const tones = wizSelectedTones.length > 0 ? wizSelectedTones : ['Professional'];
+
+  let md = '---\n';
+  md += `name: ${name}\n`;
+  md += `version: 1.0.0\n`;
+  md += `description: ${desc}\n`;
+  md += `business_type: ${industry}\n`;
+  md += `requires_corpus: ${corpus}\n`;
+  md += `temperature: ${temp}\n`;
+  md += `max_tokens: ${maxTokens}\n`;
+  if (citations) md += `citation_required: true\n`;
+  if (tags.length > 0) {
+    md += `tags:\n`;
+    tags.forEach(t => { md += `  - ${t}\n`; });
+  }
+  md += '---\n\n';
+
+  md += `You are an expert ${industry.toLowerCase()} professional who generates ${tones.map(t => t.toLowerCase()).join(', ')} documents.\n\n`;
+  md += `Your task is to generate a ${name.toLowerCase()} based on the user's input.\n\n`;
+
+  if (corpus) {
+    md += `When corpus context is provided, incorporate factual details from the source documents. `;
+    if (citations) md += `Cite sources using [1], [2], etc. `;
+    md += `Do not invent data that is not in the provided context.\n\n`;
+  }
+
+  md += `## Output Format\n\n`;
+  wizSections.forEach(s => {
+    md += `### ${s}\n`;
+    md += `[Content for this section based on the user's input`;
+    if (corpus) md += ` and corpus context`;
+    md += `]\n\n`;
+  });
+
+  md += `## Style Guidelines\n`;
+  tones.forEach(t => {
+    const guidelines = {
+      'Professional': '- Use clear, business-appropriate language',
+      'Formal': '- Use formal tone, avoid contractions and colloquialisms',
+      'Friendly': '- Use warm, approachable language while maintaining credibility',
+      'Technical': '- Use precise technical terminology appropriate to the audience',
+      'Concise': '- Keep sentences short (under 20 words), eliminate filler',
+      'Persuasive': '- Lead with benefits, use active voice, include clear calls to action',
+      'Neutral': '- Present information objectively without opinion or bias',
+      'Executive': '- Lead with conclusions, be brief, focus on decisions and impact',
+    };
+    md += (guidelines[t] || `- Maintain a ${t.toLowerCase()} tone`) + '\n';
+  });
+  md += '- Adapt detail level to the audience\n';
+  md += '- Use bullet points and tables where they improve readability\n';
+
+  if (instructions) {
+    md += `\n## Additional Instructions\n${instructions}\n`;
+  }
+
+  md += `\n## Rules\n`;
+  md += `- If information is missing or unclear, use [NEEDS INPUT] placeholders\n`;
+  md += `- Follow the output format structure above\n`;
+  if (corpus) md += `- Only use facts from the provided corpus — do not fabricate data\n`;
+  md += `- Adapt the level of detail based on the complexity of the user's request\n`;
+
+  return md;
+}
+
+async function saveWizardSkill() {
+  const content = document.getElementById('wiz-preview').value;
+  const name = document.getElementById('wiz-name').value.trim();
+  const filename = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '.md';
+
+  const btn = document.getElementById('wiz-next');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    const r = await fetch('/api/skills/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, content })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Failed to save skill');
+
+    toast(`Skill "${name}" created!`, 'success');
+    closeSkillWizard();
+    loadSkills();
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Skill';
+  }
+}
+
+document.getElementById('wizard-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeSkillWizard();
 });
 
 // ── Toasts ────────────────────────────────────────────

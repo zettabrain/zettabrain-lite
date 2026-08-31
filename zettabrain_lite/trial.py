@@ -22,7 +22,7 @@ from .config import BASE_DIR
 TRIAL_STATE_FILE = BASE_DIR / "trial_state.json"
 TRIAL_MAX_REQUESTS = 25
 TRIAL_PROXY_URL = "https://trial.zettabrain.io/v1"
-TRIAL_MODEL = "gemini-2.5-flash-lite"
+TRIAL_MODEL = "gemini-2.5-flash"
 TRIAL_PROVIDER = "trial"
 
 

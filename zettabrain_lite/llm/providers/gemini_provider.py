@@ -9,7 +9,7 @@ import httpx
 from ..base import LLMProvider
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-lite"
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 class GeminiProvider(LLMProvider):

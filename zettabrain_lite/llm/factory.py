@@ -170,7 +170,7 @@ def create_generation_provider(
         from .providers.gemini_provider import GeminiProvider
         return GeminiProvider(
             api_key=api_key or get_setting("gemini_api_key"),
-            model=model or get_setting("gemini_model") or "gemini-2.5-flash-lite",
+            model=model or get_setting("gemini_model") or "gemini-2.5-flash",
             **kwargs,
         )
 

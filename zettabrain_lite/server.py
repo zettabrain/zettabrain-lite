@@ -171,6 +171,15 @@ def _get_available_models() -> list:
     """Return all available models with provider prefix for the model dropdown."""
     models = []
 
+    # Trial model (first in list if available)
+    try:
+        from .trial import get_trial_model_entry
+        trial_entry = get_trial_model_entry()
+        if trial_entry:
+            models.append(trial_entry)
+    except Exception:
+        pass
+
     # Local Ollama models
     for m in _get_ollama_models():
         models.append({"id": f"ollama:{m}", "label": f"Local-{m}", "provider": "ollama"})
@@ -208,6 +217,10 @@ def _get_available_models() -> list:
         fw_model = cfg.get("fireworks_model", "accounts/fireworks/models/llama-v3p1-8b-instruct")
         short = fw_model.split("/")[-1] if "/" in fw_model else fw_model
         models.append({"id": f"fireworks:{fw_model}", "label": f"Fireworks-{short}", "provider": "fireworks"})
+
+    if cfg.get("gemini_api_key"):
+        gem_model = cfg.get("gemini_model", "gemini-2.0-flash-lite")
+        models.append({"id": f"gemini:{gem_model}", "label": f"Gemini-{gem_model}", "provider": "gemini"})
 
     return models
 
@@ -263,10 +276,14 @@ def _resolve_llm_for_chat(model_id: str):
 
     if provider == "ollama":
         pass
+    elif provider == "trial":
+        pass
     elif provider == "openai":
         api_key = cfg.get("openai_api_key")
     elif provider == "claude":
         api_key = cfg.get("anthropic_api_key")
+    elif provider == "gemini":
+        api_key = cfg.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
     else:
         api_key = cfg.get(f"{provider}_api_key")
 
@@ -393,6 +410,15 @@ async def status():
 @app.get("/api/models")
 async def get_models():
     return {"models": _get_available_models()}
+
+
+@app.get("/api/trial")
+async def trial_status():
+    try:
+        from .trial import get_trial_usage
+        return get_trial_usage()
+    except Exception:
+        return {"requests_used": 0, "requests_remaining": 0, "max_requests": 5, "exhausted": True}
 
 
 @app.get("/api/sources")
@@ -704,23 +730,29 @@ async def chat(req: ChatRequest):
         t_retr = time.monotonic() - t0
 
         context = format_context(sources)
+        prompt_text = RAG_PROMPT.format(context=context, question=question)
 
-        from .llm.factory import get_chat_llm
-        from langchain_core.prompts import PromptTemplate
-        from langchain_core.output_parsers import StrOutputParser
-
-        llm = get_chat_llm(
-            provider=provider, model=model,
-            ollama_host=ollama_host, api_key=api_key,
-        )
-
-        prompt = PromptTemplate.from_template(RAG_PROMPT)
         t1 = time.monotonic()
-        response = llm.invoke(prompt.format(context=context, question=question))
-        if hasattr(response, 'content'):
-            answer = response.content.strip()
+
+        if provider == "trial":
+            from .trial import trial_generate
+            answer = trial_generate(prompt_text, temperature=0.0, max_tokens=1024)
         else:
-            answer = str(response).strip()
+            from .llm.factory import get_chat_llm
+
+            llm = get_chat_llm(
+                provider=provider, model=model,
+                ollama_host=ollama_host, api_key=api_key,
+            )
+
+            from langchain_core.prompts import PromptTemplate
+            prompt = PromptTemplate.from_template(RAG_PROMPT)
+            response = llm.invoke(prompt.format(context=context, question=question))
+            if hasattr(response, 'content'):
+                answer = response.content.strip()
+            else:
+                answer = str(response).strip()
+
         t_gen = time.monotonic() - t1
         return sources, answer, t_retr, t_gen
 
@@ -800,7 +832,21 @@ async def websocket_chat(websocket: WebSocket):
                 prompt_text = RAG_PROMPT.format(context=context, question=question)
 
                 # Stream based on provider
-                if provider == "ollama":
+                if provider == "trial":
+                    from .trial import trial_generate
+                    t_g0 = time.monotonic()
+                    full_answer = ""
+                    error_msg = None
+                    try:
+                        result = await loop.run_in_executor(
+                            None, lambda: trial_generate(prompt_text, temperature=0.0, max_tokens=1024)
+                        )
+                        full_answer = result
+                        await websocket.send_json({"type": "token", "token": result})
+                    except Exception as exc:
+                        error_msg = str(exc)
+
+                elif provider == "ollama":
                     queue: asyncio.Queue = asyncio.Queue()
                     t_g0 = time.monotonic()
 

@@ -71,6 +71,20 @@ def get_chat_llm(
         from langchain_anthropic import ChatAnthropic
         llm = ChatAnthropic(model=model, api_key=api_key, max_tokens=1024)
 
+    elif provider == "gemini":
+        if not api_key:
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("API key required for Gemini. Configure in Settings.")
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+            temperature=0.0,
+            max_tokens=1024,
+        )
+
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -152,8 +166,16 @@ def create_generation_provider(
             **kwargs,
         )
 
+    elif provider_name == "gemini":
+        from .providers.gemini_provider import GeminiProvider
+        return GeminiProvider(
+            api_key=api_key or get_setting("gemini_api_key"),
+            model=model or get_setting("gemini_model") or "gemini-2.0-flash-lite",
+            **kwargs,
+        )
+
     else:
         raise ValueError(
             f"Unknown provider: {provider_name}. "
-            f"Supported: ollama, groq, together, cerebras, openrouter, fireworks, openai, claude"
+            f"Supported: ollama, groq, together, cerebras, openrouter, fireworks, openai, claude, gemini"
         )

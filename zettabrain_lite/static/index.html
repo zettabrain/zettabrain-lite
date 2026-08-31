@@ -604,6 +604,10 @@
             Add API keys to enable cloud models in the model dropdown.
           </p>
           <div class="form-group">
+            <label>Google Gemini API Key</label>
+            <input class="input-field" id="set-gemini-key" type="password" placeholder="AIza...">
+          </div>
+          <div class="form-group">
             <label>Groq API Key</label>
             <input class="input-field" id="set-groq-key" type="password" placeholder="gsk_...">
           </div>
@@ -1428,6 +1432,7 @@ async function loadSettings() {
 
     document.getElementById('set-ollama-host').value = cfg.ollama_host || '';
     document.getElementById('set-embed-model').value = cfg.embed_model || '';
+    document.getElementById('set-gemini-key').value = cfg.gemini_api_key || '';
     document.getElementById('set-groq-key').value = cfg.groq_api_key || '';
     document.getElementById('set-openai-key').value = cfg.openai_api_key || '';
     document.getElementById('set-anthropic-key').value = cfg.anthropic_api_key || '';
@@ -1445,6 +1450,7 @@ async function saveSettings() {
   const fields = [
     ['set-ollama-host', 'ollama_host'],
     ['set-embed-model', 'embed_model'],
+    ['set-gemini-key', 'gemini_api_key'],
     ['set-groq-key', 'groq_api_key'],
     ['set-openai-key', 'openai_api_key'],
     ['set-anthropic-key', 'anthropic_api_key'],

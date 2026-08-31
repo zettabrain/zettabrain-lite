@@ -8,7 +8,7 @@ primary_region = "iad"
   dockerfile = "Dockerfile"
 
 [env]
-  MAX_REQUESTS = "5"
+  MAX_REQUESTS = "25"
 
 [http_service]
   internal_port = 8080

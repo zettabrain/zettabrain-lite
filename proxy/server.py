@@ -24,7 +24,7 @@ app = FastAPI(title="ZettaBrain Trial Proxy", version="1.0.0")
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "5"))
+MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "25"))
 
 _usage: dict = defaultdict(lambda: {"count": 0, "first_seen": 0})
 

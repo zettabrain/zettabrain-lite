@@ -20,8 +20,8 @@ import httpx
 from .config import BASE_DIR
 
 TRIAL_STATE_FILE = BASE_DIR / "trial_state.json"
-TRIAL_MAX_REQUESTS = 5
-TRIAL_PROXY_URL = "https://zettabrain-trial-proxy-38374664161.us-central1.run.app/v1"
+TRIAL_MAX_REQUESTS = 25
+TRIAL_PROXY_URL = "https://trial.zettabrain.io/v1"
 TRIAL_MODEL = "gemini-2.0-flash-lite"
 TRIAL_PROVIDER = "trial"
 
@@ -76,10 +76,16 @@ def trial_generate(prompt: str, temperature: float = 0.7, max_tokens: int = 1024
     usage = get_trial_usage()
     if usage["exhausted"]:
         remaining_msg = (
-            "Trial limit reached (5 free requests used). "
-            "To continue, either:\n"
-            "  - Pull a local model: Settings > Pull LLM Model (free, unlimited)\n"
-            "  - Add a cloud API key: Settings > Cloud Providers"
+            "Your free trial has ended. To keep using ZettaBrain, choose one of these free options:\n\n"
+            "FASTEST (30 seconds):\n"
+            "  1. Get a free Groq API key at https://console.groq.com\n"
+            "  2. Paste it in Settings > Cloud Providers > Groq API Key\n"
+            "  3. Select a Groq model from the dropdown — 500+ tokens/sec, no GPU needed\n\n"
+            "FREE FOREVER (needs 5min + decent hardware):\n"
+            "  - Go to Settings > Pull LLM Model and pull 'phi4-mini' for a lightweight local model\n\n"
+            "OTHER FREE OPTIONS:\n"
+            "  - Google Gemini: free at https://aistudio.google.com/apikey\n"
+            "  - OpenRouter: free models at https://openrouter.ai"
         )
         raise RuntimeError(remaining_msg)
 

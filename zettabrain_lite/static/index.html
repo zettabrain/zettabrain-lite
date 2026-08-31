@@ -181,6 +181,24 @@
   @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
   @keyframes fadeUp  { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
+  /* ── Free API Guide Banner ─────────────────────── */
+  .free-guide { display: none; background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(99,102,241,0.1)); border: 1px solid var(--accent); border-radius: var(--radius); padding: 20px; margin: 16px 20px 0; animation: fadeUp 0.3s ease; }
+  .free-guide.show { display: block; }
+  .free-guide h3 { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
+  .free-guide .guide-options { display: flex; flex-direction: column; gap: 12px; }
+  .free-guide .guide-option { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .free-guide .guide-option h4 { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 6px; }
+  .free-guide .guide-option p { font-size: 12px; color: var(--text2); line-height: 1.6; margin: 0; }
+  .free-guide .guide-option a { color: var(--accent); text-decoration: none; }
+  .free-guide .guide-option a:hover { text-decoration: underline; }
+  .free-guide .guide-option .steps { font-size: 12px; color: var(--text2); margin-top: 6px; padding-left: 16px; }
+  .free-guide .guide-option .steps li { margin-bottom: 3px; }
+  .free-guide .guide-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-left: 6px; }
+  .free-guide .badge-fast { background: rgba(34,197,94,0.15); color: var(--green); }
+  .free-guide .badge-offline { background: rgba(99,102,241,0.15); color: var(--accent2); }
+  .free-guide .dismiss-guide { background: none; border: none; color: var(--text3); font-size: 12px; cursor: pointer; margin-top: 10px; padding: 0; }
+  .free-guide .dismiss-guide:hover { color: var(--text); }
+
   /* ── Wizard ───────────────────────────────────── */
   .wizard-steps { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
   .wizard-step { flex: 1; padding: 10px 8px; text-align: center; font-size: 12px; font-weight: 500; color: var(--text3); border-bottom: 2px solid transparent; transition: all 0.15s; cursor: default; }
@@ -333,6 +351,42 @@
           </div>
         </div>
       </div>
+      <!-- Free API Key Guide (shown when trial exhausted) -->
+      <div class="free-guide" id="free-guide">
+        <h3>Your free trial has ended — here's how to keep going for free</h3>
+        <div class="guide-options">
+          <div class="guide-option">
+            <h4>Groq — Fastest Free Option <span class="guide-badge badge-fast">30 sec setup</span></h4>
+            <p>Free API key, no credit card. Runs Llama 3.1 at 500+ tokens/sec — faster than most paid APIs.</p>
+            <ol class="steps">
+              <li>Go to <a href="https://console.groq.com" target="_blank">console.groq.com</a> and sign up (Google/GitHub login)</li>
+              <li>Click "API Keys" and create one</li>
+              <li>Paste it in <strong>Settings > Cloud Providers > Groq API Key</strong></li>
+              <li>Select a Groq model from the dropdown — done!</li>
+            </ol>
+          </div>
+          <div class="guide-option">
+            <h4>Google Gemini — Free Tier <span class="guide-badge badge-fast">30 sec setup</span></h4>
+            <p>1,500 free requests per day. Great for document generation.</p>
+            <ol class="steps">
+              <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></li>
+              <li>Click "Create API Key"</li>
+              <li>Paste it in <strong>Settings > Cloud Providers > Gemini API Key</strong></li>
+            </ol>
+          </div>
+          <div class="guide-option">
+            <h4>Local Model — Fully Offline, Unlimited <span class="guide-badge badge-offline">5 min setup</span></h4>
+            <p>No internet needed. Your data never leaves your machine.</p>
+            <ol class="steps">
+              <li>Go to <strong>Settings > Pull LLM Model</strong></li>
+              <li>Type <code style="background:var(--bg);padding:1px 5px;border-radius:3px;">phi4-mini</code> (lightweight, works on any hardware) and click Pull</li>
+              <li>For better quality with a GPU: <code style="background:var(--bg);padding:1px 5px;border-radius:3px;">llama3.1:8b</code></li>
+            </ol>
+          </div>
+        </div>
+        <button class="dismiss-guide" onclick="dismissGuide()">Dismiss</button>
+      </div>
+
       <div class="input-bar">
         <div class="input-wrap">
           <textarea class="chat-input" id="chat-input" rows="1"
@@ -831,6 +885,7 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshStatus();
   loadModels();
   connectWS();
+  checkTrialStatus();
   setInterval(refreshStatus, 30000);
 });
 
@@ -853,6 +908,9 @@ function handleWSMessage(data) {
   } else if (data.type === 'error') {
     finishStreaming(null);
     toast(data.message, 'error');
+    if (data.message && (data.message.includes('trial') || data.message.includes('Trial') || data.message.includes('free trial'))) {
+      showFreeGuide();
+    }
   }
 }
 
@@ -1582,6 +1640,32 @@ document.getElementById('source-modal').addEventListener('click', e => {
 document.getElementById('upload-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeUploadModal();
 });
+
+// ── Trial Status & Free Guide ─────────────────────────
+async function checkTrialStatus() {
+  try {
+    const r = await fetch('/api/trial');
+    const data = await r.json();
+    if (data.exhausted) {
+      showFreeGuide();
+    }
+  } catch(e) {
+    // Silently ignore — trial check is non-critical
+  }
+}
+
+function showFreeGuide() {
+  const guide = document.getElementById('free-guide');
+  if (guide && !sessionStorage.getItem('guide-dismissed')) {
+    guide.classList.add('show');
+  }
+}
+
+function dismissGuide() {
+  const guide = document.getElementById('free-guide');
+  if (guide) guide.classList.remove('show');
+  sessionStorage.setItem('guide-dismissed', '1');
+}
 
 // ── Skill Creation Wizard ─────────────────────────────
 let wizStep = 1;

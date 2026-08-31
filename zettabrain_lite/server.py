@@ -219,7 +219,7 @@ def _get_available_models() -> list:
         models.append({"id": f"fireworks:{fw_model}", "label": f"Fireworks-{short}", "provider": "fireworks"})
 
     if cfg.get("gemini_api_key"):
-        gem_model = cfg.get("gemini_model", "gemini-2.5-flash")
+        gem_model = cfg.get("gemini_model", "gemini-3.5-flash-lite")
         models.append({"id": f"gemini:{gem_model}", "label": f"Gemini-{gem_model}", "provider": "gemini"})
 
     return models

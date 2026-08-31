@@ -36,9 +36,9 @@ def _get_trial_model() -> str:
         with httpx.Client(timeout=10) as client:
             resp = client.get(f"{TRIAL_PROXY_URL}/model")
             resp.raise_for_status()
-            _cached_model = resp.json().get("model", "gemini-2.5-flash")
+            _cached_model = resp.json().get("model", "gemini-3.5-flash-lite")
     except Exception:
-        _cached_model = "gemini-2.5-flash"
+        _cached_model = "gemini-3.5-flash-lite"
     return _cached_model
 
 

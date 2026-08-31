@@ -363,6 +363,7 @@ class StorageAddRequest(BaseModel):
 class GenerateBody(BaseModel):
     input: str
     skill_name: str
+    model: Optional[str] = None
     context: dict = {}
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -1003,8 +1004,33 @@ async def generate_document(body: GenerateBody):
     if skill.requires_corpus:
         corpus_retriever = _build_corpus_retriever()
 
-    from .llm.factory import create_generation_provider
-    llm_provider = create_generation_provider()
+    model_id = body.model or f"ollama:{get_setting('llm_model') or LLM_MODEL}"
+    provider, model, api_key, ollama_host = _resolve_llm_for_chat(model_id)
+
+    if provider == "trial":
+        from .trial import trial_generate as _trial_gen
+        from .llm.base import LLMProvider as _LP
+
+        class _TrialProvider(_LP):
+            def generate(self, prompt, temperature=0.7, max_tokens=2000, **kw):
+                return _trial_gen(prompt, temperature=temperature, max_tokens=max_tokens)
+            def stream(self, prompt, temperature=0.7, max_tokens=2000, **kw):
+                yield self.generate(prompt, temperature, max_tokens)
+            def check_health(self):
+                return True
+            def get_model_info(self):
+                return {"provider": "trial", "model": "gemini-2.0-flash-lite"}
+
+        llm_provider = _TrialProvider()
+    else:
+        from .llm.factory import create_generation_provider
+        gen_kwargs = {"provider_name": provider, "model": model}
+        if api_key:
+            gen_kwargs["api_key"] = api_key
+        if provider == "ollama":
+            gen_kwargs["base_url"] = ollama_host
+        llm_provider = create_generation_provider(**gen_kwargs)
+
     engine = GenerationEngine(llm_provider=llm_provider, corpus_retriever=corpus_retriever)
 
     request = GenerationRequest(

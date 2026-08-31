@@ -1418,7 +1418,7 @@ async function runGenerate() {
     const r = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input, skill_name: selectedSkill })
+      body: JSON.stringify({ input, skill_name: selectedSkill, model: document.getElementById('model-select').value })
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Generation failed');

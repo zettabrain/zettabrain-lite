@@ -1,0 +1,5 @@
+deploy.sh
+fly.toml
+*.md
+.gcloudignore
+.dockerignore

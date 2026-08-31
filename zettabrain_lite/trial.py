@@ -4,15 +4,15 @@ ZettaBrain Lite — Trial gateway for first-run experience.
 Provides a rate-limited trial using a proxy so users can try ZettaBrain
 immediately without configuring API keys or downloading a local model.
 
-The proxy holds the real API key server-side. Each installation gets a
-unique install_id and is limited to TRIAL_MAX_REQUESTS requests.
+The proxy holds the real API key server-side and auto-discovers the best
+available Gemini model. Each installation gets a unique install_id and
+is limited to TRIAL_MAX_REQUESTS requests.
 """
 
 import hashlib
 import json
 import platform
 import uuid
-from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -21,9 +21,25 @@ from .config import BASE_DIR
 
 TRIAL_STATE_FILE = BASE_DIR / "trial_state.json"
 TRIAL_MAX_REQUESTS = 25
-TRIAL_PROXY_URL = "https://trial.zettabrain.io/v1"
-TRIAL_MODEL = "gemini-2.5-flash"
+TRIAL_PROXY_URL = "https://zettabrain-trial-proxy-38374664161.us-central1.run.app/v1"
 TRIAL_PROVIDER = "trial"
+
+_cached_model: Optional[str] = None
+
+
+def _get_trial_model() -> str:
+    """Ask the proxy which Gemini model is currently available."""
+    global _cached_model
+    if _cached_model:
+        return _cached_model
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(f"{TRIAL_PROXY_URL}/model")
+            resp.raise_for_status()
+            _cached_model = resp.json().get("model", "gemini-2.5-flash")
+    except Exception:
+        _cached_model = "gemini-2.5-flash"
+    return _cached_model
 
 
 def _get_install_id() -> str:
@@ -90,6 +106,7 @@ def trial_generate(prompt: str, temperature: float = 0.7, max_tokens: int = 1024
         raise RuntimeError(remaining_msg)
 
     install_id = _get_install_id()
+    model = _get_trial_model()
 
     try:
         with httpx.Client(timeout=120) as client:
@@ -100,7 +117,7 @@ def trial_generate(prompt: str, temperature: float = 0.7, max_tokens: int = 1024
                     "X-ZettaBrain-Install-ID": install_id,
                 },
                 json={
-                    "model": TRIAL_MODEL,
+                    "model": model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -129,8 +146,9 @@ def get_trial_model_entry() -> Optional[dict]:
         return None
     usage = get_trial_usage()
     remaining = usage["requests_remaining"]
+    model = _get_trial_model()
     return {
-        "id": f"trial:{TRIAL_MODEL}",
+        "id": f"trial:{model}",
         "label": f"Try Free ({remaining} left) - Gemini Flash",
         "provider": "trial",
     }

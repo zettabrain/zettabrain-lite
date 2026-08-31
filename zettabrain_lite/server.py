@@ -1008,7 +1008,7 @@ async def generate_document(body: GenerateBody):
     provider, model, api_key, ollama_host = _resolve_llm_for_chat(model_id)
 
     if provider == "trial":
-        from .trial import trial_generate as _trial_gen
+        from .trial import trial_generate as _trial_gen, _get_trial_model
         from .llm.base import LLMProvider as _LP
 
         class _TrialProvider(_LP):
@@ -1019,7 +1019,7 @@ async def generate_document(body: GenerateBody):
             def check_health(self):
                 return True
             def get_model_info(self):
-                return {"provider": "trial", "model": "gemini-2.5-flash"}
+                return {"provider": "trial", "model": _get_trial_model()}
 
         llm_provider = _TrialProvider()
     else:

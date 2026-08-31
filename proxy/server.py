@@ -90,7 +90,7 @@ async def proxy_chat(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    body["model"] = body.get("model", "gemini-2.0-flash-lite")
+    body["model"] = body.get("model", "gemini-2.5-flash-lite")
     if body.get("max_tokens", 0) > 2048:
         body["max_tokens"] = 2048
 

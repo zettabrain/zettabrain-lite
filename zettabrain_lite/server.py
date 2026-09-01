@@ -1255,6 +1255,18 @@ async def export_pdf(record_id: int):
     pdf.set_text_color(30, 41, 59)
     content = record.output_content or ""
 
+    def _sanitize_for_pdf(text):
+        replacements = {
+            "•": "-", "–": "-", "—": "-",
+            "‘": "'", "’": "'", "“": '"', "”": '"',
+            "…": "...", " ": " ", "‒": "-",
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+        return text.encode("latin-1", errors="replace").decode("latin-1")
+
+    content = _sanitize_for_pdf(content)
+
     for line in content.split("\n"):
         stripped = line.strip()
 
@@ -1275,8 +1287,7 @@ async def export_pdf(record_id: int):
             pdf.ln(1)
         elif stripped.startswith("- ") or stripped.startswith("* "):
             pdf.set_font("Helvetica", "", 10)
-            pdf.cell(8)
-            pdf.multi_cell(0, 5.5, f"•  {stripped[2:]}")
+            pdf.multi_cell(0, 5.5, f"   -  {stripped[2:]}")
         elif stripped.startswith("**") and stripped.endswith("**"):
             pdf.set_font("Helvetica", "B", 10)
             pdf.multi_cell(0, 5.5, stripped.strip("*"))

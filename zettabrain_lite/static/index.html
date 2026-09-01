@@ -108,7 +108,13 @@
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
   /* Welcome screen */
-  .welcome { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; text-align: center; padding: 60px 40px 40px; gap: 16px; color: var(--text2); margin: 0 auto; max-width: 640px; width: 100%; }
+  .welcome { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 40px 24px; gap: 16px; color: var(--text2); max-width: 640px; width: 100%; }
+
+  /* Onyx-style: center welcome + input in middle of page when no messages */
+  #panel-chat.welcome-active .chat-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 0; }
+  #panel-chat.welcome-active .input-bar { border-top: none; max-width: 680px; margin: 0 auto; width: 100%; padding: 0 20px 24px; }
+  #panel-chat.welcome-active .skill-bar { max-width: 680px; margin: 0 auto; width: 100%; padding: 8px 20px 0; }
+  #panel-chat.welcome-active .free-guide { max-width: 680px; margin: 0 auto; }
   .welcome-icon { font-size: 56px; }
   .welcome h2 { font-size: 22px; font-weight: 700; color: var(--text); }
   .welcome p { max-width: 400px; line-height: 1.7; }
@@ -360,7 +366,7 @@
     </div>
 
     <!-- CHAT PANEL -->
-    <div class="panel active" id="panel-chat" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+    <div class="panel active welcome-active" id="panel-chat" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
       <div class="chat-area" id="chat-area">
         <div class="welcome" id="welcome">
           <div class="welcome-icon">&#129504;</div>
@@ -1052,6 +1058,7 @@ async function sendMessage() {
 
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.style.display = 'none';
+  document.getElementById('panel-chat').classList.remove('welcome-active');
 
   input.value = '';
   input.style.height = 'auto';
@@ -1599,6 +1606,7 @@ async function loadGeneration(id) {
 
     const welcome = document.getElementById('welcome');
     if (welcome) welcome.style.display = 'none';
+    document.getElementById('panel-chat').classList.remove('welcome-active');
 
     renderMessage('user', data.input_text);
     const assistantId = 'msg-' + Date.now();

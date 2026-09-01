@@ -34,7 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["langchain-openai>=0.1", "openai>=1.0"]
 claude = ["langchain-anthropic>=0.1", "anthropic>=0.25"]
-all = ["langchain-openai>=0.1", "openai>=1.0", "langchain-anthropic>=0.1", "anthropic>=0.25", "fpdf2>=2.7"]
+all = ["langchain-openai>=0.1", "openai>=1.0", "langchain-anthropic>=0.1", "anthropic>=0.25", "fpdf2>=2.7", "python-docx>=1.1"]
 
 [project.scripts]
 zettabrain-lite = "zettabrain_lite.cli:main"

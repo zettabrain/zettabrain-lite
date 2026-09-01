@@ -108,7 +108,7 @@
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
 
   /* Welcome screen */
-  .welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: 40px; gap: 16px; color: var(--text2); }
+  .welcome { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; text-align: center; padding: 60px 40px 40px; gap: 16px; color: var(--text2); margin: 0 auto; max-width: 640px; width: 100%; }
   .welcome-icon { font-size: 56px; }
   .welcome h2 { font-size: 22px; font-weight: 700; color: var(--text); }
   .welcome p { max-width: 400px; line-height: 1.7; }
@@ -152,6 +152,17 @@
   .skill-select { flex: 1; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; outline: none; }
   .skill-select:focus { border-color: var(--accent); }
   .skill-indicator { font-size: 11px; color: var(--accent2); font-weight: 500; white-space: nowrap; }
+  .export-btns { display: inline-flex; gap: 4px; margin-left: 8px; }
+  .btn-export { background: var(--bg3); border: 1px solid var(--border); color: var(--accent); padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.15s; text-transform: uppercase; letter-spacing: 0.03em; }
+  .btn-export:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .history-section { border-top: 1px solid var(--border); flex-shrink: 0; max-height: 200px; overflow-y: auto; }
+  .history-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); padding: 12px 16px 6px; }
+  .history-item { display: flex; align-items: center; gap: 8px; padding: 6px 16px; cursor: pointer; transition: background 0.1s; font-size: 12px; color: var(--text2); }
+  .history-item:hover { background: var(--bg3); color: var(--text); }
+  .history-item .hist-skill { color: var(--accent2); font-weight: 500; font-size: 11px; }
+  .history-item .hist-date { color: var(--text3); font-size: 10px; margin-left: auto; white-space: nowrap; }
+
   .skills-list-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
   .skills-list-item h4 { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
   .skills-list-item p { font-size: 12px; color: var(--text2); margin: 0; }
@@ -320,6 +331,12 @@
       </ul>
     </div>
 
+    <!-- Generation History -->
+    <div class="history-section" id="history-section">
+      <div class="history-label">Recent Generations</div>
+      <div id="history-list"></div>
+    </div>
+
     <!-- Actions -->
     <div style="padding:16px; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--border);">
       <button class="btn btn-ghost btn-full btn-sm" onclick="refreshStatus()">Refresh Status</button>
@@ -347,8 +364,11 @@
       <div class="chat-area" id="chat-area">
         <div class="welcome" id="welcome">
           <div class="welcome-icon">&#129504;</div>
-          <h2>Ask anything about your documents</h2>
-          <p>ZettaBrain searches your local knowledge base using AI — completely private, zero cloud.</p>
+          <h2 id="welcome-title">Ask anything about your documents</h2>
+          <p id="welcome-desc">ZettaBrain searches your local knowledge base using AI — completely private, zero cloud.</p>
+          <div id="welcome-capabilities" style="display:none; width:100%;">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:16px;" id="welcome-skills"></div>
+          </div>
           <div class="suggestions" id="suggestions">
             <div class="suggestion" onclick="sendSuggestion(this)">What are the main topics?</div>
             <div class="suggestion" onclick="sendSuggestion(this)">Summarise my documents</div>
@@ -639,6 +659,23 @@
         </div>
 
         <div class="panel-section">
+          <h3>Organization</h3>
+          <div class="form-group">
+            <label>Organization Name</label>
+            <input class="input-field" id="set-org-name" placeholder="Your Company Name">
+          </div>
+          <div class="form-group">
+            <label>Company Logo</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input type="file" id="logo-upload" accept="image/*" style="display:none;" onchange="uploadLogo(event)">
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('logo-upload').click()">Upload Logo</button>
+              <span id="logo-status" style="font-size:11px; color:var(--text3);"></span>
+              <img id="logo-preview" src="" style="display:none; height:28px; border-radius:4px; margin-left:8px;">
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-section">
           <h3>Ollama Configuration</h3>
           <div class="form-group">
             <label>Ollama Host URL</label>
@@ -883,6 +920,8 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshStatus();
   loadModels();
   loadSkills();
+  loadWelcome();
+  loadHistory();
   connectWS();
   checkTrialStatus();
   setInterval(refreshStatus, 30000);
@@ -1040,8 +1079,17 @@ async function sendMessage() {
       if (bubble) bubble.innerHTML = mdToHtml(currentAnswer);
 
       const meta = document.getElementById(assistantId + '-meta');
-      if (meta) meta.textContent = `${selectedSkill} · ${data.model || currentModel}`;
+      if (meta) {
+        meta.innerHTML = `${selectedSkill} · ${data.model || currentModel}`;
+        if (data.id) {
+          meta.innerHTML += ` <span class="export-btns">` +
+            `<button class="btn-export" onclick="exportDoc(${data.id}, 'pdf')" title="Download PDF">PDF</button>` +
+            `<button class="btn-export" onclick="exportDoc(${data.id}, 'docx')" title="Download Word">Word</button>` +
+            `</span>`;
+        }
+      }
 
+      loadHistory();
       currentAnswer = '';
       isStreaming = false;
       setSendDisabled(false);
@@ -1464,6 +1512,158 @@ function onSkillChange() {
   }
 }
 
+// ── Welcome (dynamic) ────────────────────────────────
+async function loadWelcome() {
+  try {
+    const r = await fetch('/api/corpus/summary');
+    const data = await r.json();
+
+    if (!data.has_docs) return;
+
+    const titleEl = document.getElementById('welcome-title');
+    const descEl = document.getElementById('welcome-desc');
+    const capEl = document.getElementById('welcome-capabilities');
+    const skillsEl = document.getElementById('welcome-skills');
+    const sugEl = document.getElementById('suggestions');
+
+    const sourceNames = data.sources.slice(0, 5).join(', ');
+    const moreCount = data.doc_count > 5 ? ` and ${data.doc_count - 5} more` : '';
+
+    titleEl.textContent = 'Your knowledge base is ready';
+    descEl.innerHTML = `<strong>${data.doc_count} document${data.doc_count > 1 ? 's' : ''}</strong> loaded — ${sourceNames}${moreCount}.<br>Ask questions or generate professional documents.`;
+
+    if (data.skills && data.skills.length > 0) {
+      capEl.style.display = 'block';
+      skillsEl.innerHTML = data.skills.map(s => `
+        <div class="suggestion" onclick="activateSkillFromWelcome('${s.name.replace(/'/g, "\\'")}')">
+          &#9889; ${s.name}
+        </div>
+      `).join('');
+    }
+
+    sugEl.innerHTML = `
+      <div class="suggestion" onclick="sendSuggestion(this)">What topics are covered?</div>
+      <div class="suggestion" onclick="sendSuggestion(this)">Summarise the key points</div>
+      <div class="suggestion" onclick="sendSuggestion(this)">What can I generate?</div>
+    `;
+  } catch(e) {
+    console.error('Failed to load welcome', e);
+  }
+}
+
+function activateSkillFromWelcome(skillName) {
+  const sel = document.getElementById('skill-select');
+  sel.value = skillName;
+  onSkillChange();
+  document.getElementById('chat-input').focus();
+}
+
+// ── Export ────────────────────────────────────────────
+function exportDoc(recordId, format) {
+  window.open(`/api/export/${recordId}/${format}`, '_blank');
+}
+
+// ── History ──────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const r = await fetch('/api/history/generation?limit=15');
+    const data = await r.json();
+    const list = document.getElementById('history-list');
+
+    if (!data || data.length === 0) {
+      list.innerHTML = '<div style="padding:6px 16px; font-size:11px; color:var(--text3);">No generations yet</div>';
+      return;
+    }
+
+    list.innerHTML = data.map(h => {
+      const date = new Date(h.created_at);
+      const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const preview = h.input_text.slice(0, 40) + (h.input_text.length > 40 ? '...' : '');
+      return `<div class="history-item" onclick="loadGeneration(${h.id})" title="${h.input_text.replace(/"/g, '&quot;')}">
+        <span class="hist-skill">${h.skill_name}</span>
+        <span>${preview}</span>
+        <span class="hist-date">${dateStr}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    console.error('Failed to load history', e);
+  }
+}
+
+async function loadGeneration(id) {
+  try {
+    const r = await fetch(`/api/history/generation/${id}`);
+    const data = await r.json();
+
+    switchTab('chat');
+
+    const welcome = document.getElementById('welcome');
+    if (welcome) welcome.style.display = 'none';
+
+    renderMessage('user', data.input_text);
+    const assistantId = 'msg-' + Date.now();
+    renderMessage('assistant', '', assistantId);
+
+    const bubble = document.querySelector(`#${assistantId} .msg-bubble`);
+    if (bubble) bubble.innerHTML = mdToHtml(data.output_content);
+
+    const meta = document.getElementById(assistantId + '-meta');
+    if (meta) {
+      const date = new Date(data.created_at);
+      meta.innerHTML = `${data.skill_name} · ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` +
+        ` <span class="export-btns">` +
+        `<button class="btn-export" onclick="exportDoc(${data.id}, 'pdf')" title="Download PDF">PDF</button>` +
+        `<button class="btn-export" onclick="exportDoc(${data.id}, 'docx')" title="Download Word">Word</button>` +
+        `</span>`;
+    }
+  } catch(e) {
+    toast('Failed to load generation', 'error');
+  }
+}
+
+// ── Logo ─────────────────────────────────────────────
+async function uploadLogo(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('logo', file);
+
+  try {
+    const r = await fetch('/api/settings/logo', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Upload failed');
+    toast('Logo uploaded!', 'success');
+    loadLogoPreview();
+  } catch(e) {
+    toast('Logo upload failed: ' + e.message, 'error');
+  }
+}
+
+async function loadLogoPreview() {
+  const img = document.getElementById('logo-preview');
+  const status = document.getElementById('logo-status');
+  try {
+    const r = await fetch('/api/settings/logo');
+    if (r.ok) {
+      const blob = await r.blob();
+      img.src = URL.createObjectURL(blob);
+      img.style.display = 'inline';
+      status.textContent = 'Logo set';
+      status.style.color = 'var(--green)';
+    } else {
+      img.style.display = 'none';
+      status.textContent = 'No logo';
+    }
+  } catch(e) {
+    img.style.display = 'none';
+    status.textContent = 'No logo';
+  }
+}
+
 function showUploadSkillModal() {
   document.getElementById('upload-modal').classList.add('open');
   document.getElementById('upload-file-picker').value = '';
@@ -1520,6 +1720,7 @@ async function loadSettings() {
     const data = await r.json();
     const cfg = data.settings || {};
 
+    document.getElementById('set-org-name').value = cfg.org_name || '';
     document.getElementById('set-ollama-host').value = cfg.ollama_host || '';
     document.getElementById('set-embed-model').value = cfg.embed_model || '';
     document.getElementById('set-gemini-key').value = cfg.gemini_api_key || '';
@@ -1530,6 +1731,7 @@ async function loadSettings() {
     document.getElementById('set-cerebras-key').value = cfg.cerebras_api_key || '';
     document.getElementById('set-openrouter-key').value = cfg.openrouter_api_key || '';
     document.getElementById('set-fireworks-key').value = cfg.fireworks_api_key || '';
+    loadLogoPreview();
   } catch(e) {
     console.error('Failed to load settings', e);
   }
@@ -1538,6 +1740,7 @@ async function loadSettings() {
 async function saveSettings() {
   const settings = {};
   const fields = [
+    ['set-org-name', 'org_name'],
     ['set-ollama-host', 'ollama_host'],
     ['set-embed-model', 'embed_model'],
     ['set-gemini-key', 'gemini_api_key'],

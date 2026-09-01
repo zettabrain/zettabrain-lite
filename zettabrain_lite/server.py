@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -449,6 +449,50 @@ async def update_settings(body: SettingsUpdate):
     save_config(cfg)
     _reset_vs_cache()
     return {"success": True}
+
+
+@app.post("/api/settings/logo")
+async def upload_logo(request: Request):
+    """Upload organization logo (accepts multipart form or base64 JSON)."""
+    content_type = request.headers.get("content-type", "")
+
+    if "multipart" in content_type:
+        form = await request.form()
+        file = form.get("logo")
+        if not file:
+            raise HTTPException(status_code=400, detail="No logo file provided")
+        logo_bytes = await file.read()
+        filename = file.filename or "logo.png"
+    else:
+        import base64
+        body = await request.json()
+        logo_bytes = base64.b64decode(body.get("data", ""))
+        filename = body.get("filename", "logo.png")
+
+    logo_dir = DATA_DIR / "branding"
+    logo_dir.mkdir(parents=True, exist_ok=True)
+
+    ext = Path(filename).suffix or ".png"
+    logo_path = logo_dir / f"logo{ext}"
+    logo_path.write_bytes(logo_bytes)
+
+    set_setting("logo_path", str(logo_path))
+    return {"success": True, "path": str(logo_path)}
+
+
+@app.get("/api/settings/logo")
+async def get_logo():
+    """Serve the uploaded logo."""
+    logo_path_str = get_setting("logo_path")
+    if not logo_path_str:
+        raise HTTPException(status_code=404, detail="No logo uploaded")
+
+    logo_path = Path(logo_path_str)
+    if not logo_path.exists():
+        raise HTTPException(status_code=404, detail="Logo file not found")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(logo_path)
 
 
 # ── Routes: Storage Management ───────────────────────────────────────────────
@@ -1144,6 +1188,241 @@ async def generation_history(limit: int = 50):
          "output_preview": r.output_content[:300], "created_at": r.created_at.isoformat()}
         for r in rows
     ]
+
+
+@app.get("/api/history/generation/{record_id}")
+async def generation_detail(record_id: int):
+    from .database import get_session, GenerationHistory
+    with get_session() as session:
+        record = session.get(GenerationHistory, record_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return {
+            "id": record.id,
+            "skill_name": record.skill_name,
+            "skill_version": record.skill_version,
+            "input_text": record.input_text,
+            "output_content": record.output_content,
+            "citations": json.loads(record.citations) if record.citations else [],
+            "generation_time_ms": record.generation_time_ms,
+            "metadata": json.loads(record.metadata_json) if record.metadata_json else {},
+            "created_at": record.created_at.isoformat(),
+        }
+
+
+@app.get("/api/export/{record_id}/pdf")
+async def export_pdf(record_id: int):
+    from .database import get_session, GenerationHistory
+
+    with get_session() as session:
+        record = session.get(GenerationHistory, record_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        raise HTTPException(status_code=500, detail="fpdf2 not installed. Install with: pip install fpdf2")
+
+    org_name = get_setting("org_name") or "Organization"
+    logo_path_str = get_setting("logo_path")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=25)
+    pdf.add_page()
+
+    if logo_path_str and Path(logo_path_str).exists():
+        try:
+            pdf.image(logo_path_str, x=15, y=10, h=18)
+        except Exception:
+            pass
+
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_xy(15, 32)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(0, 10, org_name, new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_draw_color(59, 130, 246)
+    pdf.set_line_width(0.5)
+    pdf.line(15, pdf.get_y() + 2, 195, pdf.get_y() + 2)
+    pdf.ln(8)
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(100, 116, 139)
+    pdf.cell(0, 6, f"Skill: {record.skill_name}  |  Generated: {record.created_at.strftime('%B %d, %Y')}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(6)
+
+    pdf.set_text_color(30, 41, 59)
+    content = record.output_content or ""
+
+    for line in content.split("\n"):
+        stripped = line.strip()
+
+        if stripped.startswith("# "):
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "B", 16)
+            pdf.multi_cell(0, 8, stripped[2:])
+            pdf.ln(2)
+        elif stripped.startswith("## "):
+            pdf.ln(3)
+            pdf.set_font("Helvetica", "B", 13)
+            pdf.multi_cell(0, 7, stripped[3:])
+            pdf.ln(2)
+        elif stripped.startswith("### "):
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.multi_cell(0, 6, stripped[4:])
+            pdf.ln(1)
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(8)
+            pdf.multi_cell(0, 5.5, f"•  {stripped[2:]}")
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.multi_cell(0, 5.5, stripped.strip("*"))
+        elif stripped == "":
+            pdf.ln(3)
+        else:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5.5, stripped)
+
+    pdf.ln(10)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.set_line_width(0.3)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 5, f"Generated by ZettaBrain  |  {record.created_at.strftime('%B %d, %Y at %I:%M %p')}", align="C")
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        pdf.output(tmp.name)
+        tmp_path = tmp.name
+
+    from fastapi.responses import FileResponse
+    safe_name = record.skill_name.replace(" ", "_")
+    return FileResponse(
+        tmp_path,
+        media_type="application/pdf",
+        filename=f"{safe_name}_{record.created_at.strftime('%Y%m%d')}.pdf",
+    )
+
+
+@app.get("/api/export/{record_id}/docx")
+async def export_docx(record_id: int):
+    from .database import get_session, GenerationHistory
+
+    with get_session() as session:
+        record = session.get(GenerationHistory, record_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+
+    try:
+        from docx import Document
+        from docx.shared import Inches, Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError:
+        raise HTTPException(status_code=500, detail="python-docx not installed. Install with: pip install python-docx")
+
+    org_name = get_setting("org_name") or "Organization"
+    logo_path_str = get_setting("logo_path")
+
+    doc = Document()
+
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+    style.font.color.rgb = RGBColor(30, 41, 59)
+
+    if logo_path_str and Path(logo_path_str).exists():
+        try:
+            doc.add_picture(logo_path_str, height=Inches(0.8))
+        except Exception:
+            pass
+
+    title = doc.add_heading(org_name, level=0)
+    title.runs[0].font.color.rgb = RGBColor(30, 41, 59)
+
+    meta_para = doc.add_paragraph()
+    meta_run = meta_para.add_run(f"Skill: {record.skill_name}  |  Generated: {record.created_at.strftime('%B %d, %Y')}")
+    meta_run.font.size = Pt(9)
+    meta_run.font.color.rgb = RGBColor(100, 116, 139)
+
+    doc.add_paragraph("")
+
+    content = record.output_content or ""
+    for line in content.split("\n"):
+        stripped = line.strip()
+
+        if stripped.startswith("# "):
+            doc.add_heading(stripped[2:], level=1)
+        elif stripped.startswith("## "):
+            doc.add_heading(stripped[3:], level=2)
+        elif stripped.startswith("### "):
+            doc.add_heading(stripped[4:], level=3)
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            doc.add_paragraph(stripped[2:], style="List Bullet")
+        elif stripped.startswith("**") and stripped.endswith("**"):
+            p = doc.add_paragraph()
+            run = p.add_run(stripped.strip("*"))
+            run.bold = True
+        elif stripped == "":
+            continue
+        else:
+            doc.add_paragraph(stripped)
+
+    doc.add_paragraph("")
+    footer_para = doc.add_paragraph()
+    footer_run = footer_para.add_run(f"Generated by ZettaBrain  |  {record.created_at.strftime('%B %d, %Y at %I:%M %p')}")
+    footer_run.font.size = Pt(8)
+    footer_run.font.color.rgb = RGBColor(150, 150, 150)
+    footer_run.italic = True
+    footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
+        doc.save(tmp.name)
+        tmp_path = tmp.name
+
+    from fastapi.responses import FileResponse
+    safe_name = record.skill_name.replace(" ", "_")
+    return FileResponse(
+        tmp_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"{safe_name}_{record.created_at.strftime('%Y%m%d')}.docx",
+    )
+
+
+@app.get("/api/corpus/summary")
+async def corpus_summary():
+    """Return a summary of ingested documents for the welcome screen."""
+    sources = _get_sources()
+
+    if not sources:
+        return {"has_docs": False, "summary": None, "doc_count": 0, "sources": []}
+
+    skills = []
+    for skill_dir in [SKILLS_DIR, _BUILTIN_SKILLS_DIR]:
+        if skill_dir.exists():
+            for f in skill_dir.iterdir():
+                if f.suffix == ".md":
+                    try:
+                        import frontmatter
+                        fm = frontmatter.load(str(f))
+                        skills.append({
+                            "name": fm.get("name", f.stem),
+                            "description": fm.get("description", ""),
+                        })
+                    except Exception:
+                        pass
+
+    return {
+        "has_docs": True,
+        "doc_count": len(sources),
+        "sources": [Path(s).stem for s in sources[:10]],
+        "skills": skills,
+    }
 
 
 # ── Routes: Clear Vectorstore ────────────────────────────────────────────────

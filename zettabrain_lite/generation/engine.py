@@ -43,6 +43,11 @@ class GenerationEngine:
         )
         prompt_parts.append("")
 
+        now = datetime.now()
+        prompt_parts.append(f"Today's date is {now.strftime('%B %d, %Y')}.")
+        prompt_parts.append("Use this date as the current date for any dates in the document (e.g. proposal date, quote date, effective date). Never invent or use a different date.")
+        prompt_parts.append("")
+
         prompt_parts.append("# TASK INSTRUCTIONS")
         prompt_parts.append(skill.instructions)
         prompt_parts.append("")

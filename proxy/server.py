@@ -32,6 +32,13 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="ZettaBrain Trial Proxy", version="2.0.0")
 
+
+@app.on_event("startup")
+async def startup_event():
+    log.info(f"Trial proxy starting on port {os.environ.get('PORT', '8080')}")
+    log.info(f"Project: {os.environ.get('GOOGLE_CLOUD_PROJECT', 'zettabrain')}")
+
+
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "zettabrain")
 LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 VERTEX_CHAT_URL = (
@@ -41,11 +48,11 @@ VERTEX_CHAT_URL = (
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "25"))
 
 MODEL_PREFERENCE = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
+    "google/gemini-3.5-flash-lite",
+    "google/gemini-3.1-flash-lite",
+    "google/gemini-3.5-flash",
+    "google/gemini-3.6-flash",
+    "google/gemini-3.7-flash",
 ]
 
 _credentials = None
@@ -144,7 +151,8 @@ async def health():
 @app.get("/v1/model")
 async def get_model():
     model = _resolved_model or MODEL_PREFERENCE[0]
-    return {"model": model}
+    short = model.split("/", 1)[-1] if "/" in model else model
+    return {"model": short}
 
 
 @app.post("/v1/chat/completions")

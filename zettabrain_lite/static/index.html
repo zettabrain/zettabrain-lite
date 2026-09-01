@@ -253,6 +253,17 @@
   .industry-chip { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); font-size: 12px; cursor: pointer; text-align: center; transition: all 0.15s; }
   .industry-chip:hover { border-color: var(--accent); color: var(--accent); }
   .industry-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .skill-source-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-left: 6px; vertical-align: middle; }
+  .skill-source-badge.builtin { background: rgba(99,102,241,0.15); color: var(--accent2); }
+  .skill-source-badge.user { background: rgba(34,197,94,0.15); color: var(--green); }
+  .skill-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .template-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+  .template-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; transition: all 0.15s; }
+  .template-card:hover { border-color: var(--accent); }
+  .template-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+  .template-card h4 { font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 4px; }
+  .template-card p { font-size: 11px; color: var(--text3); margin: 0; line-height: 1.4; }
+  .template-card .template-icon { font-size: 20px; margin-bottom: 6px; }
 
   /* ── Scrollbar ────────────────────────────────── */
   ::-webkit-scrollbar { width: 5px; }
@@ -838,24 +849,83 @@ Instructions for the AI..."></textarea>
     <div class="modal-body">
       <!-- Step indicators -->
       <div class="wizard-steps">
-        <div class="wizard-step active" id="wiz-step-1"><span class="step-num">1</span> Basics</div>
-        <div class="wizard-step" id="wiz-step-2"><span class="step-num">2</span> Structure</div>
-        <div class="wizard-step" id="wiz-step-3"><span class="step-num">3</span> Style</div>
-        <div class="wizard-step" id="wiz-step-4"><span class="step-num">4</span> Review</div>
+        <div class="wizard-step active" id="wiz-step-1"><span class="step-num">1</span> What</div>
+        <div class="wizard-step" id="wiz-step-2"><span class="step-num">2</span> How</div>
+        <div class="wizard-step" id="wiz-step-3"><span class="step-num">3</span> Review</div>
       </div>
 
-      <!-- Page 1: Basics -->
+      <!-- Page 1: What document do you want? -->
       <div class="wizard-page active" id="wiz-page-1">
-        <div class="form-group">
-          <label>Skill Name *</label>
-          <input class="input-field" id="wiz-name" placeholder="e.g. Customer Proposal, Weekly Report, SOW Template">
+        <p style="color:var(--text2); font-size:13px; margin-bottom:16px;">
+          Start from a template or describe your document from scratch.
+        </p>
+        <div class="template-grid" id="wiz-templates">
+          <div class="template-card" onclick="selectTemplate(this, 'proposal')">
+            <div class="template-icon">&#128196;</div>
+            <h4>Proposal / Quote</h4>
+            <p>Client proposals, quotes, bids, SOWs</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'report')">
+            <div class="template-icon">&#128202;</div>
+            <h4>Report</h4>
+            <p>Status reports, weekly updates, assessments</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'email')">
+            <div class="template-icon">&#9993;</div>
+            <h4>Email / Letter</h4>
+            <p>Professional emails, cover letters, outreach</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'sop')">
+            <div class="template-icon">&#128221;</div>
+            <h4>Procedure / SOP</h4>
+            <p>Standard operating procedures, guides, runbooks</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'summary')">
+            <div class="template-icon">&#128203;</div>
+            <h4>Summary / Notes</h4>
+            <p>Meeting notes, executive summaries, briefs</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'custom')">
+            <div class="template-icon">&#9999;</div>
+            <h4>Custom</h4>
+            <p>Start from scratch with your own idea</p>
+          </div>
         </div>
         <div class="form-group">
-          <label>Description *</label>
-          <input class="input-field" id="wiz-desc" placeholder="What does this skill generate? One sentence.">
+          <label>Name your skill *</label>
+          <input class="input-field" id="wiz-name" placeholder="e.g. Client Proposal, Weekly Status Report, Offer Letter">
         </div>
         <div class="form-group">
-          <label>Industry / Category</label>
+          <label>Describe what it should generate *</label>
+          <textarea class="input-field" id="wiz-desc" rows="3" placeholder="Example: Generate a client proposal that includes pricing from our rate card, a project timeline, team allocation, and terms. It should look professional and reference our past work."></textarea>
+          <p style="font-size:11px; color:var(--text3); margin-top:4px;">Write in plain English. The more detail you give, the better the output.</p>
+        </div>
+      </div>
+
+      <!-- Page 2: Options -->
+      <div class="wizard-page" id="wiz-page-2">
+        <div class="form-group">
+          <label>Tone</label>
+          <div class="tone-options" id="wiz-tones">
+            <div class="tone-chip selected" onclick="selectTone(this)">Professional</div>
+            <div class="tone-chip" onclick="selectTone(this)">Formal</div>
+            <div class="tone-chip" onclick="selectTone(this)">Friendly</div>
+            <div class="tone-chip" onclick="selectTone(this)">Technical</div>
+            <div class="tone-chip" onclick="selectTone(this)">Concise</div>
+            <div class="tone-chip" onclick="selectTone(this)">Persuasive</div>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label>Document length</label>
+          <select class="input-field" id="wiz-maxlen">
+            <option value="1000">Short (~1 page)</option>
+            <option value="2000" selected>Medium (~2 pages)</option>
+            <option value="3000">Long (~3 pages)</option>
+            <option value="4000">Very Long (~4+ pages)</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label>Category</label>
           <div class="industry-grid">
             <div class="industry-chip" onclick="selectIndustry(this)">IT / DevOps</div>
             <div class="industry-chip" onclick="selectIndustry(this)">Engineering</div>
@@ -864,81 +934,25 @@ Instructions for the AI..."></textarea>
             <div class="industry-chip" onclick="selectIndustry(this)">Finance</div>
             <div class="industry-chip" onclick="selectIndustry(this)">HR</div>
             <div class="industry-chip" onclick="selectIndustry(this)">Healthcare</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Education</div>
             <div class="industry-chip" onclick="selectIndustry(this)">Consulting</div>
             <div class="industry-chip" onclick="selectIndustry(this)">Marketing</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Operations</div>
             <div class="industry-chip" onclick="selectIndustry(this)">General</div>
           </div>
         </div>
-        <div class="form-group">
-          <label>Tags (comma-separated)</label>
-          <input class="input-field" id="wiz-tags" placeholder="e.g. proposal, client, pricing">
-        </div>
-        <label class="checkbox-row">
+        <label class="checkbox-row" style="margin-top:14px;">
           <input type="checkbox" id="wiz-corpus">
-          This skill needs data from ingested documents (corpus-aware)
+          Use my ingested documents as a data source (pulls real data from your files)
         </label>
-      </div>
-
-      <!-- Page 2: Structure -->
-      <div class="wizard-page" id="wiz-page-2">
-        <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
-          Define the sections of the generated document. Each section becomes a heading in the output.
-        </p>
-        <div class="section-builder" id="wiz-sections">
-          <!-- Populated by JS -->
-        </div>
-        <button class="add-section-btn" onclick="addWizSection()" style="margin-top:8px;">+ Add Section</button>
-
-        <div class="form-group" style="margin-top:16px;">
-          <label>Custom Instructions (optional)</label>
-          <textarea class="input-field" id="wiz-instructions" rows="4" placeholder="Additional instructions for the AI, e.g. 'Always include pricing from the corpus' or 'Use metric units only'"></textarea>
-        </div>
-      </div>
-
-      <!-- Page 3: Style & Behavior -->
-      <div class="wizard-page" id="wiz-page-3">
-        <div class="form-group">
-          <label>Tone</label>
-          <div class="tone-options" id="wiz-tones">
-            <div class="tone-chip" onclick="selectTone(this)">Professional</div>
-            <div class="tone-chip" onclick="selectTone(this)">Formal</div>
-            <div class="tone-chip" onclick="selectTone(this)">Friendly</div>
-            <div class="tone-chip" onclick="selectTone(this)">Technical</div>
-            <div class="tone-chip" onclick="selectTone(this)">Concise</div>
-            <div class="tone-chip" onclick="selectTone(this)">Persuasive</div>
-            <div class="tone-chip" onclick="selectTone(this)">Neutral</div>
-            <div class="tone-chip" onclick="selectTone(this)">Executive</div>
-          </div>
-        </div>
-        <div class="form-group" style="margin-top:16px;">
-          <label>Creativity (Temperature)</label>
-          <div style="display:flex; align-items:center; gap:12px;">
-            <input type="range" id="wiz-temp" min="0" max="10" value="4" style="flex:1; accent-color:var(--accent);" oninput="document.getElementById('wiz-temp-val').textContent = (this.value/10).toFixed(1)">
-            <span id="wiz-temp-val" style="color:var(--text); font-weight:600; min-width:30px;">0.4</span>
-          </div>
-          <p style="font-size:11px; color:var(--text3); margin-top:4px;">Low = predictable, consistent output. High = more creative, varied output.</p>
-        </div>
-        <div class="form-group">
-          <label>Max Output Length</label>
-          <select class="input-field" id="wiz-maxlen">
-            <option value="1000">Short (~1 page)</option>
-            <option value="2000" selected>Medium (~2 pages)</option>
-            <option value="3000">Long (~3 pages)</option>
-            <option value="4000">Very Long (~4+ pages)</option>
-          </select>
-        </div>
         <label class="checkbox-row">
           <input type="checkbox" id="wiz-citations">
-          Require citations from source documents
+          Include source citations in the output
         </label>
       </div>
 
-      <!-- Page 4: Review & Save -->
-      <div class="wizard-page" id="wiz-page-4">
+      <!-- Page 3: Review & Save -->
+      <div class="wizard-page" id="wiz-page-3">
         <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
-          Review the generated skill file. You can edit it directly before saving.
+          Here's the skill file ZettaBrain will use. You can edit it if you want, or just hit Save.
         </p>
         <textarea class="input-field" id="wiz-preview" rows="20" style="font-family:'Courier New',monospace; font-size:12px; line-height:1.6;"></textarea>
       </div>
@@ -947,6 +961,23 @@ Instructions for the AI..."></textarea>
       <div class="wizard-nav">
         <button class="btn btn-ghost" id="wiz-prev" onclick="wizPrev()" style="visibility:hidden;">Back</button>
         <button class="btn btn-primary" id="wiz-next" onclick="wizNext()">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Skill Markdown Viewer Modal -->
+<div class="modal-overlay" id="skill-view-modal">
+  <div class="modal wizard-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="skill-view-title">Skill File</div>
+      <button class="modal-close" onclick="closeSkillView()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <textarea class="input-field" id="skill-view-content" rows="24" style="font-family:'Courier New',monospace; font-size:12px; line-height:1.6;" readonly></textarea>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-ghost btn-sm" onclick="copySkillContent()">Copy to Clipboard</button>
+        <button class="btn btn-ghost btn-sm" onclick="downloadSkillFile()">Download .md</button>
       </div>
     </div>
   </div>
@@ -1623,13 +1654,16 @@ async function loadSkills() {
         list.innerHTML = skills.map(s => `
           <div class="skills-list-item">
             <div style="flex:1; min-width:0;">
-              <h4>${s.name}</h4>
+              <h4>${s.name} <span class="skill-source-badge ${s.source || 'builtin'}">${s.source === 'user' ? 'Custom' : 'Built-in'}</span></h4>
               <p>${s.description || 'No description'}</p>
               <div class="skill-tags">
                 ${(s.tags || []).map(t => `<span class="skill-tag">${t}</span>`).join('')}
               </div>
             </div>
-            <button class="btn btn-danger btn-sm" onclick="deleteSkill('${s.name.replace(/'/g, "\\'")}')" style="flex-shrink:0;">Delete</button>
+            <div class="skill-actions">
+              <button class="btn btn-ghost btn-sm" onclick="viewSkillMarkdown('${s.name.replace(/'/g, "\\'")}')">View</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteSkill('${s.name.replace(/'/g, "\\'")}')">Delete</button>
+            </div>
           </div>
         `).join('');
       }
@@ -2061,32 +2095,124 @@ function dismissGuide() {
   sessionStorage.setItem('guide-dismissed', '1');
 }
 
-// ── Skill Creation Wizard ─────────────────────────────
+// ── Skill Wizard State ───────────────────────────────
 let wizStep = 1;
-let wizSections = [];
 let wizSelectedIndustry = '';
 let wizSelectedTones = [];
 
+// ── Skill Markdown Viewer ─────────────────────────────
+let _viewSkillName = '';
+let _viewSkillFilename = '';
+
+async function viewSkillMarkdown(name) {
+  try {
+    const r = await fetch(`/api/skills/${encodeURIComponent(name)}/content`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Failed to load skill');
+    _viewSkillName = name;
+    _viewSkillFilename = data.filename || (name + '.md');
+    document.getElementById('skill-view-title').textContent = data.filename || name;
+    document.getElementById('skill-view-content').value = data.content;
+    document.getElementById('skill-view-modal').classList.add('open');
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+function closeSkillView() {
+  document.getElementById('skill-view-modal').classList.remove('open');
+}
+
+function copySkillContent() {
+  const content = document.getElementById('skill-view-content').value;
+  navigator.clipboard.writeText(content).then(() => toast('Copied to clipboard', 'success'));
+}
+
+function downloadSkillFile() {
+  const content = document.getElementById('skill-view-content').value;
+  const blob = new Blob([content], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = _viewSkillFilename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('skill-view-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeSkillView();
+});
+
+// ── Skill Creation Wizard ────────────────────────────
+const SKILL_TEMPLATES = {
+  proposal: {
+    name: 'Client Proposal',
+    desc: 'Generate a professional client proposal with pricing, timeline, team, and terms based on our company documents.',
+    sections: ['Executive Summary', 'Understanding of Requirements', 'Proposed Approach', 'Timeline & Milestones', 'Team', 'Investment', 'Terms & Conditions'],
+    corpus: true, citations: true, tones: ['Professional', 'Persuasive'],
+  },
+  report: {
+    name: 'Status Report',
+    desc: 'Generate a status report covering progress, issues, risks, and next steps for a project or team.',
+    sections: ['Summary', 'Progress This Period', 'Key Issues & Risks', 'Metrics', 'Next Steps'],
+    corpus: false, citations: false, tones: ['Professional', 'Concise'],
+  },
+  email: {
+    name: 'Professional Email',
+    desc: 'Draft a professional email based on the topic and context provided.',
+    sections: ['Subject Line', 'Email Body'],
+    corpus: false, citations: false, tones: ['Professional', 'Friendly'],
+  },
+  sop: {
+    name: 'Standard Operating Procedure',
+    desc: 'Generate a step-by-step procedure document with prerequisites, steps, troubleshooting, and revision history.',
+    sections: ['Purpose', 'Scope', 'Prerequisites', 'Procedure Steps', 'Troubleshooting', 'Revision History'],
+    corpus: true, citations: false, tones: ['Technical', 'Concise'],
+  },
+  summary: {
+    name: 'Executive Summary',
+    desc: 'Generate a concise executive summary of the provided information, highlighting key decisions and action items.',
+    sections: ['Overview', 'Key Points', 'Decisions', 'Action Items'],
+    corpus: true, citations: true, tones: ['Professional', 'Concise'],
+  },
+  custom: {
+    name: '', desc: '', sections: [],
+    corpus: false, citations: false, tones: ['Professional'],
+  },
+};
+
+let wizSelectedTemplate = '';
+
+function selectTemplate(el, key) {
+  document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  wizSelectedTemplate = key;
+
+  const tmpl = SKILL_TEMPLATES[key];
+  if (key !== 'custom') {
+    document.getElementById('wiz-name').value = tmpl.name;
+    document.getElementById('wiz-desc').value = tmpl.desc;
+  }
+}
+
 function openSkillWizard() {
   wizStep = 1;
-  wizSections = ['Overview', 'Key Points', 'Details', 'Conclusion'];
   wizSelectedIndustry = '';
-  wizSelectedTones = [];
+  wizSelectedTones = ['Professional'];
+  wizSelectedTemplate = '';
 
   document.getElementById('wiz-name').value = '';
   document.getElementById('wiz-desc').value = '';
-  document.getElementById('wiz-tags').value = '';
   document.getElementById('wiz-corpus').checked = false;
-  document.getElementById('wiz-instructions').value = '';
-  document.getElementById('wiz-temp').value = 4;
-  document.getElementById('wiz-temp-val').textContent = '0.4';
   document.getElementById('wiz-maxlen').value = '2000';
   document.getElementById('wiz-citations').checked = false;
 
   document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.tone-chip').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+  // Default: Professional selected
+  const toneChips = document.querySelectorAll('.tone-chip');
+  if (toneChips.length > 0) toneChips[0].classList.add('selected');
 
-  renderWizSections();
   updateWizSteps();
   document.getElementById('wizard-modal').classList.add('open');
 }
@@ -2106,31 +2232,8 @@ function selectTone(el) {
   wizSelectedTones = Array.from(document.querySelectorAll('.tone-chip.selected')).map(c => c.textContent.trim());
 }
 
-function renderWizSections() {
-  const container = document.getElementById('wiz-sections');
-  container.innerHTML = wizSections.map((s, i) => `
-    <div class="section-item">
-      <span class="drag-handle">&#9776;</span>
-      <input value="${s}" onchange="wizSections[${i}] = this.value" placeholder="Section name">
-      <button class="remove-section" onclick="removeWizSection(${i})" title="Remove">&times;</button>
-    </div>
-  `).join('');
-}
-
-function addWizSection() {
-  wizSections.push('');
-  renderWizSections();
-  const items = document.querySelectorAll('#wiz-sections .section-item input');
-  if (items.length > 0) items[items.length - 1].focus();
-}
-
-function removeWizSection(i) {
-  wizSections.splice(i, 1);
-  renderWizSections();
-}
-
 function updateWizSteps() {
-  for (let i = 1; i <= 4; i++) {
+  for (let i = 1; i <= 3; i++) {
     const stepEl = document.getElementById(`wiz-step-${i}`);
     const pageEl = document.getElementById(`wiz-page-${i}`);
     stepEl.className = 'wizard-step' + (i === wizStep ? ' active' : '') + (i < wizStep ? ' done' : '');
@@ -2138,28 +2241,20 @@ function updateWizSteps() {
   }
   document.getElementById('wiz-prev').style.visibility = wizStep === 1 ? 'hidden' : 'visible';
   const nextBtn = document.getElementById('wiz-next');
-  if (wizStep === 4) {
-    nextBtn.textContent = 'Save Skill';
-  } else {
-    nextBtn.textContent = 'Next';
-  }
+  nextBtn.textContent = wizStep === 3 ? 'Save Skill' : 'Next';
 }
 
 function wizNext() {
   if (wizStep === 1) {
     const name = document.getElementById('wiz-name').value.trim();
     const desc = document.getElementById('wiz-desc').value.trim();
-    if (!name) { toast('Skill name is required', 'error'); return; }
-    if (!desc) { toast('Description is required', 'error'); return; }
+    if (!name) { toast('Give your skill a name', 'error'); return; }
+    if (!desc) { toast('Describe what the skill should generate', 'error'); return; }
   }
   if (wizStep === 2) {
-    wizSections = wizSections.filter(s => s.trim());
-    if (wizSections.length === 0) { toast('Add at least one section', 'error'); return; }
-  }
-  if (wizStep === 3) {
     document.getElementById('wiz-preview').value = buildSkillMarkdown();
   }
-  if (wizStep === 4) {
+  if (wizStep === 3) {
     saveWizardSkill();
     return;
   }
@@ -2177,73 +2272,63 @@ function wizPrev() {
 function buildSkillMarkdown() {
   const name = document.getElementById('wiz-name').value.trim();
   const desc = document.getElementById('wiz-desc').value.trim();
-  const tags = document.getElementById('wiz-tags').value.trim().split(',').map(t => t.trim()).filter(Boolean);
   const corpus = document.getElementById('wiz-corpus').checked;
-  const temp = (parseInt(document.getElementById('wiz-temp').value) / 10).toFixed(1);
   const maxTokens = document.getElementById('wiz-maxlen').value;
   const citations = document.getElementById('wiz-citations').checked;
-  const instructions = document.getElementById('wiz-instructions').value.trim();
   const industry = wizSelectedIndustry || 'General';
   const tones = wizSelectedTones.length > 0 ? wizSelectedTones : ['Professional'];
+  const tmpl = SKILL_TEMPLATES[wizSelectedTemplate] || SKILL_TEMPLATES.custom;
+  const sections = tmpl.sections.length > 0 ? tmpl.sections : ['Overview', 'Details', 'Conclusion'];
 
   let md = '---\n';
   md += `name: ${name}\n`;
   md += `version: 1.0.0\n`;
-  md += `description: ${desc}\n`;
+  md += `description: ${desc.split('\n')[0].substring(0, 200)}\n`;
   md += `business_type: ${industry}\n`;
   md += `requires_corpus: ${corpus}\n`;
-  md += `temperature: ${temp}\n`;
+  md += `temperature: 0.4\n`;
   md += `max_tokens: ${maxTokens}\n`;
   if (citations) md += `citation_required: true\n`;
-  if (tags.length > 0) {
-    md += `tags:\n`;
-    tags.forEach(t => { md += `  - ${t}\n`; });
-  }
   md += '---\n\n';
 
-  md += `You are an expert ${industry.toLowerCase()} professional who generates ${tones.map(t => t.toLowerCase()).join(', ')} documents.\n\n`;
-  md += `Your task is to generate a ${name.toLowerCase()} based on the user's input.\n\n`;
+  md += `# ${name}\n\n`;
+  md += `${desc}\n\n`;
 
   if (corpus) {
-    md += `When corpus context is provided, incorporate factual details from the source documents. `;
-    if (citations) md += `Cite sources using [1], [2], etc. `;
-    md += `Do not invent data that is not in the provided context.\n\n`;
+    md += `## Data Sources\n`;
+    md += `Use the provided corpus context to ground your output in real data. `;
+    if (citations) md += `Cite sources in brackets, e.g. [filename.pdf]. `;
+    md += `Do not invent information that is not in the provided documents.\n\n`;
   }
 
   md += `## Output Format\n\n`;
-  wizSections.forEach(s => {
+  sections.forEach(s => {
     md += `### ${s}\n`;
-    md += `[Content for this section based on the user's input`;
-    if (corpus) md += ` and corpus context`;
-    md += `]\n\n`;
+    md += `Write the ${s.toLowerCase()} section based on the user's input`;
+    if (corpus) md += ` and the corpus context`;
+    md += `.\n\n`;
   });
 
-  md += `## Style Guidelines\n`;
+  md += `## Style\n`;
   tones.forEach(t => {
     const guidelines = {
       'Professional': '- Use clear, business-appropriate language',
       'Formal': '- Use formal tone, avoid contractions and colloquialisms',
       'Friendly': '- Use warm, approachable language while maintaining credibility',
       'Technical': '- Use precise technical terminology appropriate to the audience',
-      'Concise': '- Keep sentences short (under 20 words), eliminate filler',
+      'Concise': '- Keep sentences short, eliminate filler words',
       'Persuasive': '- Lead with benefits, use active voice, include clear calls to action',
-      'Neutral': '- Present information objectively without opinion or bias',
-      'Executive': '- Lead with conclusions, be brief, focus on decisions and impact',
     };
     md += (guidelines[t] || `- Maintain a ${t.toLowerCase()} tone`) + '\n';
   });
-  md += '- Adapt detail level to the audience\n';
   md += '- Use bullet points and tables where they improve readability\n';
-
-  if (instructions) {
-    md += `\n## Additional Instructions\n${instructions}\n`;
-  }
+  md += '- Adapt detail level to the audience\n';
 
   md += `\n## Rules\n`;
-  md += `- If information is missing or unclear, use [NEEDS INPUT] placeholders\n`;
-  md += `- Follow the output format structure above\n`;
-  if (corpus) md += `- Only use facts from the provided corpus — do not fabricate data\n`;
-  md += `- Adapt the level of detail based on the complexity of the user's request\n`;
+  md += `- If information is missing, use [NEEDS INPUT] placeholders\n`;
+  md += `- Follow the output format above\n`;
+  if (corpus) md += `- Only use facts from the provided corpus\n`;
+  md += `- Match the level of detail to the user's request\n`;
 
   return md;
 }
@@ -2266,7 +2351,7 @@ async function saveWizardSkill() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Failed to save skill');
 
-    toast(`Skill "${name}" created! Select it from the Chat dropdown to use it.`, 'success');
+    toast(`Skill "${name}" created! Select it from the Chat dropdown.`, 'success');
     closeSkillWizard();
     loadSkills();
     switchTab('chat');

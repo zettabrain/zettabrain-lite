@@ -1140,6 +1140,7 @@ async def list_skills():
     for skills_dir in [SKILLS_DIR, _BUILTIN_SKILLS_DIR]:
         if not skills_dir.exists():
             continue
+        source = "user" if skills_dir == SKILLS_DIR else "builtin"
         for f in sorted(skills_dir.glob("*.md")):
             try:
                 skill = SkillParser.parse_file(f)
@@ -1153,6 +1154,7 @@ async def list_skills():
                             "business_type": skill.business_type,
                             "requires_corpus": skill.requires_corpus,
                             "tags": skill.tags,
+                            "source": source,
                         }
                     )
             except Exception:
@@ -1288,17 +1290,27 @@ async def upload_skill(body: SkillUploadBody):
 async def delete_skill(skill_name: str):
     from .generation.skill_parser import SkillParser
 
-    if not SKILLS_DIR.exists():
-        raise HTTPException(status_code=404, detail="Skill not found")
-    for f in SKILLS_DIR.glob("*.md"):
-        try:
-            skill = SkillParser.parse_file(f)
-            if skill.name == skill_name:
-                f.unlink()
-                return {"message": f"Skill '{skill_name}' deleted"}
-        except Exception:
+    for skills_dir in [SKILLS_DIR, _BUILTIN_SKILLS_DIR]:
+        if not skills_dir.exists():
             continue
-    raise HTTPException(status_code=404, detail="Skill not found or is built-in")
+        for f in skills_dir.glob("*.md"):
+            try:
+                skill = SkillParser.parse_file(f)
+                if skill.name == skill_name:
+                    f.unlink()
+                    return {"message": f"Skill '{skill_name}' deleted"}
+            except Exception:
+                continue
+    raise HTTPException(status_code=404, detail="Skill not found")
+
+
+@app.get("/api/skills/{skill_name}/content")
+async def get_skill_content(skill_name: str):
+    skill_file = _find_skill_file(skill_name)
+    if not skill_file:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    content = Path(skill_file).read_text(encoding="utf-8")
+    return {"name": skill_name, "content": content, "filename": Path(skill_file).name}
 
 
 # ── Routes: History ──────────────────────────────────────────────────────────

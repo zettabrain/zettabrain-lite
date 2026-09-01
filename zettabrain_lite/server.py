@@ -1276,6 +1276,10 @@ async def upload_skill(body: SkillUploadBody):
     skill_path = SKILLS_DIR / filename
     skill_path.write_text(body.content, encoding="utf-8")
 
+    from .skill_drafter import validate_skill
+
+    quality = validate_skill(body.content).as_dict()
+
     return {
         "message": f"Skill '{skill.name}' uploaded",
         "skill": {
@@ -1283,6 +1287,7 @@ async def upload_skill(body: SkillUploadBody):
             "version": skill.version,
             "description": skill.description,
         },
+        "quality": quality,
     }
 
 

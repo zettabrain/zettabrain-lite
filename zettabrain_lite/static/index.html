@@ -272,14 +272,48 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Responsive ───────────────────────────────── */
+  /* ── Sign-in overlay ──────────────────────────── */
+  .signin-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 300; display: flex; align-items: center; justify-content: center; }
+  .signin-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 40px; max-width: 400px; width: 90%; text-align: center; box-shadow: var(--shadow); }
+  .signin-logo { margin-bottom: 24px; }
+  .signin-logo .logo-title { font-size: 32px; font-weight: 700; }
+  .signin-logo .logo-title span { color: var(--accent2); }
+  .signin-logo p { color: var(--text2); font-size: 14px; margin-top: 8px; }
+  .signin-body { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .signin-divider { display: flex; align-items: center; gap: 12px; width: 100%; color: var(--text3); font-size: 12px; }
+  .signin-divider::before, .signin-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+  .signin-note { color: var(--text3); font-size: 11px; margin-top: 20px; }
+  .user-info { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); }
+  .user-avatar { width: 32px; height: 32px; border-radius: 50%; }
+  .user-avatar-placeholder { width: 32px; height: 32px; border-radius: 50%; background: var(--accent2); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; font-weight: 600; }
+  .user-name { font-size: 13px; color: var(--text); font-weight: 500; }
+  .user-email { font-size: 11px; color: var(--text3); }
+
   @media (max-width: 768px) {
     .sidebar { display: none; }
     .topbar-actions { gap: 4px; }
     .tab-btn { padding: 5px 8px; font-size: 12px; }
   }
 </style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+
+<!-- Sign-in Overlay -->
+<div class="signin-overlay" id="signin-overlay">
+  <div class="signin-card">
+    <div class="signin-logo">
+      <div class="logo-title">Zetta<span>Brain</span></div>
+      <p>AI-Powered Document Intelligence</p>
+    </div>
+    <div class="signin-body">
+      <div id="google-signin-btn"></div>
+      <div class="signin-divider" id="signin-divider"><span>or</span></div>
+      <button class="btn btn-ghost btn-full" onclick="continueWithoutSignIn()">Continue without signing in</button>
+    </div>
+    <p class="signin-note">Your data stays private. ZettaBrain runs entirely on your infrastructure.</p>
+  </div>
+</div>
 
 <div class="app">
 
@@ -345,6 +379,9 @@
       <div class="history-label">Recent Generations</div>
       <div id="history-list"></div>
     </div>
+
+    <!-- User Info -->
+    <div class="user-info" id="user-info"></div>
 
     <!-- Actions -->
     <div style="padding:16px; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--border);">
@@ -733,6 +770,11 @@
             <label>Fireworks API Key</label>
             <input class="input-field" id="set-fireworks-key" type="password" placeholder="">
           </div>
+          <div style="border-bottom:1px solid var(--border); margin:12px 0;"></div>
+          <div class="form-group">
+            <label>Google OAuth Client ID (for sign-in)</label>
+            <input class="input-field" id="set-google-client-id" placeholder="xxxx.apps.googleusercontent.com">
+          </div>
           <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
         </div>
       </div>
@@ -924,8 +966,98 @@ let currentAnswer = '';
 let currentMsgId = null;
 let selectedSkill = null;
 
+// ── Auth ─────────────────────────────────────────────
+function checkAuth() {
+  const user = localStorage.getItem('zb_user');
+  if (user) {
+    document.getElementById('signin-overlay').style.display = 'none';
+    showUserInfo(JSON.parse(user));
+  } else {
+    initGoogleSignIn();
+  }
+}
+
+async function initGoogleSignIn() {
+  try {
+    const r = await fetch('/api/settings');
+    const data = await r.json();
+    const clientId = (data.settings || {}).google_client_id;
+
+    if (clientId && window.google) {
+      google.accounts.id.initialize({
+        client_id: clientId,
+        callback: handleGoogleSignIn,
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('google-signin-btn'),
+        { theme: 'filled_black', size: 'large', shape: 'pill', text: 'sign_in_with', width: 300 }
+      );
+    } else {
+      const gBtn = document.getElementById('google-signin-btn');
+      if (gBtn) gBtn.style.display = 'none';
+      const divider = document.getElementById('signin-divider');
+      if (divider) divider.style.display = 'none';
+    }
+  } catch(e) {
+    console.error('Failed to init Google Sign-In', e);
+    const gBtn = document.getElementById('google-signin-btn');
+    if (gBtn) gBtn.style.display = 'none';
+    const divider = document.getElementById('signin-divider');
+    if (divider) divider.style.display = 'none';
+  }
+}
+
+function handleGoogleSignIn(response) {
+  const payload = JSON.parse(atob(response.credential.split('.')[1]));
+  const user = {
+    name: payload.name,
+    email: payload.email,
+    picture: payload.picture,
+    given_name: payload.given_name,
+  };
+  localStorage.setItem('zb_user', JSON.stringify(user));
+  document.getElementById('signin-overlay').style.display = 'none';
+  showUserInfo(user);
+}
+
+function continueWithoutSignIn() {
+  localStorage.setItem('zb_user', JSON.stringify({ name: 'Guest', email: '' }));
+  document.getElementById('signin-overlay').style.display = 'none';
+  showUserInfo({ name: 'Guest' });
+}
+
+function showUserInfo(user) {
+  const container = document.getElementById('user-info');
+  if (!container) return;
+
+  if (user.picture) {
+    container.innerHTML = `
+      <img class="user-avatar" src="${user.picture}" referrerpolicy="no-referrer">
+      <div style="flex:1;min-width:0;">
+        <div class="user-name">${user.name}</div>
+        ${user.email ? `<div class="user-email">${user.email}</div>` : ''}
+      </div>
+      ${user.email ? '<button class="btn btn-ghost btn-sm" onclick="signOut()" style="flex-shrink:0;">Sign out</button>' : ''}
+    `;
+  } else {
+    const initial = (user.name || 'G')[0].toUpperCase();
+    container.innerHTML = `
+      <div class="user-avatar-placeholder">${initial}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="user-name">${user.name}</div>
+      </div>
+    `;
+  }
+}
+
+function signOut() {
+  localStorage.removeItem('zb_user');
+  location.reload();
+}
+
 // ── Init ─────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  checkAuth();
   refreshStatus();
   loadModels();
   loadSkills();
@@ -1756,6 +1888,7 @@ async function loadSettings() {
     document.getElementById('set-cerebras-key').value = cfg.cerebras_api_key || '';
     document.getElementById('set-openrouter-key').value = cfg.openrouter_api_key || '';
     document.getElementById('set-fireworks-key').value = cfg.fireworks_api_key || '';
+    document.getElementById('set-google-client-id').value = cfg.google_client_id || '';
     loadLogoPreview();
   } catch(e) {
     console.error('Failed to load settings', e);
@@ -1776,6 +1909,7 @@ async function saveSettings() {
     ['set-cerebras-key', 'cerebras_api_key'],
     ['set-openrouter-key', 'openrouter_api_key'],
     ['set-fireworks-key', 'fireworks_api_key'],
+    ['set-google-client-id', 'google_client_id'],
   ];
 
   fields.forEach(([elId, key]) => {

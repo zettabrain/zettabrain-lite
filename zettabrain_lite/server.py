@@ -27,7 +27,7 @@ from .config import (
     OLLAMA_HOST, LLM_MODEL, EMBED_MODEL,
     load_config, save_config, get_setting, set_setting,
 )
-from .retrieval import hybrid_retrieve, RAG_PROMPT, format_context
+from .retrieval import hybrid_retrieve, advanced_retrieve, RAG_PROMPT, ADVANCED_RAG_PROMPT, format_context
 
 PKG_DIR = Path(__file__).parent
 STATIC_DIR = PKG_DIR / "static"
@@ -770,12 +770,40 @@ async def chat(req: ChatRequest):
 
     def _run():
         vs = _get_vs()
+
+        # Build a lightweight LLM callable for retrieval stages
+        llm_fn = None
+        try:
+            if provider == "trial":
+                from .trial import trial_generate
+                llm_fn = lambda p: trial_generate(p, temperature=0.0, max_tokens=256)
+            elif provider == "ollama":
+                def _ollama_fn(p):
+                    resp = requests.post(
+                        f"{ollama_host}/api/generate",
+                        json={"model": model, "prompt": p, "stream": False},
+                        timeout=30,
+                    )
+                    if resp.status_code == 200:
+                        return resp.json().get("response", "")
+                    return ""
+                llm_fn = _ollama_fn
+            else:
+                from .llm.factory import get_chat_llm as _gcl
+                _rag_llm = _gcl(provider=provider, model=model, ollama_host=ollama_host, api_key=api_key)
+                def _cloud_fn(p):
+                    r = _rag_llm.invoke(p)
+                    return r.content.strip() if hasattr(r, 'content') else str(r).strip()
+                llm_fn = _cloud_fn
+        except Exception:
+            pass
+
         t0 = time.monotonic()
-        sources = hybrid_retrieve(question, vs)
+        sources = advanced_retrieve(question, vs, llm_fn=llm_fn)
         t_retr = time.monotonic() - t0
 
         context = format_context(sources)
-        prompt_text = RAG_PROMPT.format(context=context, question=question)
+        prompt_text = ADVANCED_RAG_PROMPT.format(context=context, question=question)
 
         t1 = time.monotonic()
 
@@ -791,7 +819,7 @@ async def chat(req: ChatRequest):
             )
 
             from langchain_core.prompts import PromptTemplate
-            prompt = PromptTemplate.from_template(RAG_PROMPT)
+            prompt = PromptTemplate.from_template(ADVANCED_RAG_PROMPT)
             response = llm.invoke(prompt.format(context=context, question=question))
             if hasattr(response, 'content'):
                 answer = response.content.strip()
@@ -860,9 +888,35 @@ async def websocket_chat(websocket: WebSocket):
                 loop = asyncio.get_event_loop()
                 vectorstore = await loop.run_in_executor(None, _get_vs)
 
+                # Build lightweight LLM callable for retrieval stages
+                ws_llm_fn = None
+                try:
+                    if provider == "trial":
+                        from .trial import trial_generate as _tg
+                        ws_llm_fn = lambda p: _tg(p, temperature=0.0, max_tokens=256)
+                    elif provider == "ollama":
+                        _oh, _m = ollama_host, model
+                        def _ws_ollama_fn(p):
+                            resp = requests.post(
+                                f"{_oh}/api/generate",
+                                json={"model": _m, "prompt": p, "stream": False},
+                                timeout=30,
+                            )
+                            return resp.json().get("response", "") if resp.status_code == 200 else ""
+                        ws_llm_fn = _ws_ollama_fn
+                    else:
+                        from .llm.factory import get_chat_llm as _gcl2
+                        _ws_llm = _gcl2(provider=provider, model=model, ollama_host=ollama_host, api_key=api_key)
+                        def _ws_cloud_fn(p):
+                            r = _ws_llm.invoke(p)
+                            return r.content.strip() if hasattr(r, 'content') else str(r).strip()
+                        ws_llm_fn = _ws_cloud_fn
+                except Exception:
+                    pass
+
                 t_r0 = time.monotonic()
                 sources = await loop.run_in_executor(
-                    None, lambda: hybrid_retrieve(question, vectorstore)
+                    None, lambda: advanced_retrieve(question, vectorstore, llm_fn=ws_llm_fn)
                 )
                 t_retr = time.monotonic() - t_r0
                 source_list = [
@@ -874,7 +928,7 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_json({"type": "sources", "sources": source_list})
 
                 context = format_context(sources)
-                prompt_text = RAG_PROMPT.format(context=context, question=question)
+                prompt_text = ADVANCED_RAG_PROMPT.format(context=context, question=question)
 
                 # Stream based on provider
                 if provider == "trial":

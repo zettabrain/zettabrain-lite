@@ -215,3 +215,230 @@ def hybrid_retrieve(question: str, vectorstore, top_k: int = 5) -> list:
             pass
 
     return merged[:top_k]
+
+
+# ── Advanced RAG (Onyx-style 6-stage pipeline) ──────────────────────────────
+
+ADVANCED_RAG_PROMPT = """You are ZettaBrain, an expert AI assistant grounded in a private document library.
+
+Your task: Answer the question below using ONLY the context provided. Every factual claim must cite its source.
+
+Rules:
+- Base your answer ONLY on the CONTEXT below. Never use outside knowledge.
+- After each fact, cite the source in brackets: [filename.pdf] or [filename.pdf p.3]
+- If the context partially answers the question, provide what you can and note what's missing.
+- If the context has no relevant information, say: "I don't have information about this in the document library."
+- Structure your answer clearly with bullet points for multi-part responses.
+- Be thorough but concise — cover all relevant points from the sources.
+
+CONTEXT:
+{context}
+
+QUESTION: {question}
+
+ANSWER (with inline citations):"""
+
+
+def expand_queries(question: str, llm_fn=None) -> list:
+    """Stage 1: Use the LLM to generate multiple search queries from one question."""
+    if not llm_fn:
+        return [question]
+
+    prompt = (
+        "Given this user question, generate exactly 3 search queries to find relevant documents.\n"
+        "Return ONLY the queries, one per line, no numbering or labels.\n\n"
+        "Line 1: Rephrase the question in natural language (semantic search)\n"
+        "Line 2: Extract key terms, acronyms, and entities (keyword search)\n"
+        "Line 3: Broaden to related concepts that might contain the answer\n\n"
+        f"Question: {question}"
+    )
+
+    try:
+        result = llm_fn(prompt)
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        if lines:
+            return lines[:3]
+    except Exception:
+        pass
+
+    return [question]
+
+
+def _rrf_merge(ranked_lists: list, k: int = 60) -> list:
+    """Reciprocal Rank Fusion: merge multiple ranked result lists."""
+    scores = {}
+    for ranked in ranked_lists:
+        for rank, doc in enumerate(ranked):
+            key = hashlib.md5(doc.page_content.encode()).hexdigest()
+            if key not in scores:
+                scores[key] = [0.0, doc]
+            scores[key][0] += 1.0 / (k + rank + 1)
+    return [item[1] for item in sorted(scores.values(), key=lambda x: -x[0])]
+
+
+def select_chunks(question: str, chunks: list, llm_fn, max_select: int = 8) -> list:
+    """Stage 3: LLM reviews retrieved chunks and selects the most relevant ones."""
+    if not llm_fn or len(chunks) <= max_select:
+        return chunks[:max_select]
+
+    numbered = "\n\n".join(
+        f"[{i+1}] {doc.page_content[:300]}" for i, doc in enumerate(chunks[:20])
+    )
+    prompt = (
+        "You are evaluating document chunks for relevance to a user's question.\n"
+        f"Below are {min(len(chunks), 20)} chunks retrieved from a document library. "
+        "Select the chunk numbers that are most relevant to answering the question. "
+        "Return ONLY the numbers, comma-separated.\n\n"
+        f"Question: {question}\n\n"
+        f"{numbered}\n\n"
+        "Most relevant chunk numbers (comma-separated):"
+    )
+
+    try:
+        result = llm_fn(prompt)
+        import re
+        nums = [int(n) for n in re.findall(r"\d+", result)]
+        selected = []
+        for n in nums:
+            idx = n - 1
+            if 0 <= idx < len(chunks) and chunks[idx] not in selected:
+                selected.append(chunks[idx])
+            if len(selected) >= max_select:
+                break
+        if selected:
+            return selected
+    except Exception:
+        pass
+
+    return chunks[:max_select]
+
+
+def expand_context(selected_chunks: list, vectorstore, window: int = 1) -> list:
+    """Stage 4: For each selected chunk, include adjacent chunks from the same document."""
+    try:
+        collection = vectorstore._collection
+        all_data = collection.get(include=["documents", "metadatas"])
+    except Exception:
+        return selected_chunks
+
+    if not all_data or not all_data.get("documents"):
+        return selected_chunks
+
+    from langchain_core.documents import Document
+
+    by_source = {}
+    for i, meta in enumerate(all_data["metadatas"]):
+        src = meta.get("source", "")
+        page = meta.get("page", 0)
+        try:
+            page = int(page) if page != "" else 0
+        except (ValueError, TypeError):
+            page = 0
+        by_source.setdefault(src, []).append((page, i))
+
+    for src in by_source:
+        by_source[src].sort()
+
+    expanded = []
+    seen = set()
+
+    for chunk in selected_chunks:
+        src = chunk.metadata.get("source", "")
+        page = chunk.metadata.get("page", 0)
+        try:
+            page = int(page) if page != "" else 0
+        except (ValueError, TypeError):
+            page = 0
+
+        if src in by_source:
+            pages = by_source[src]
+            idx = None
+            for j, (p, _) in enumerate(pages):
+                if p == page:
+                    idx = j
+                    break
+
+            if idx is not None:
+                for offset in range(-window, window + 1):
+                    ni = idx + offset
+                    if 0 <= ni < len(pages):
+                        _, doc_idx = pages[ni]
+                        doc_text = all_data["documents"][doc_idx]
+                        key = hashlib.md5(doc_text.encode()).hexdigest()
+                        if key not in seen:
+                            seen.add(key)
+                            expanded.append(Document(
+                                page_content=doc_text,
+                                metadata=all_data["metadatas"][doc_idx],
+                            ))
+            else:
+                key = hashlib.md5(chunk.page_content.encode()).hexdigest()
+                if key not in seen:
+                    seen.add(key)
+                    expanded.append(chunk)
+        else:
+            key = hashlib.md5(chunk.page_content.encode()).hexdigest()
+            if key not in seen:
+                seen.add(key)
+                expanded.append(chunk)
+
+    return expanded
+
+
+def advanced_retrieve(
+    question: str,
+    vectorstore,
+    top_k: int = 5,
+    llm_fn=None,
+) -> list:
+    """
+    Onyx-style 6-stage retrieval pipeline:
+      1. Query expansion  — LLM generates 3 search variants
+      2. Multi-query hybrid search with RRF fusion
+      3. LLM-driven chunk selection
+      4. Context expansion — adjacent chunks from same docs
+      5. Cross-encoder rerank (FlashRank) → top_k
+    """
+    # Stage 1: Query expansion
+    queries = expand_queries(question, llm_fn)
+
+    # Stage 2: Multi-query hybrid search + RRF
+    ranked_lists = []
+    for q in queries:
+        semantic = vectorstore.as_retriever(
+            search_type="mmr",
+            search_kwargs={"k": 6, "fetch_k": 30, "lambda_mult": 0.82},
+        ).invoke(q)
+        ranked_lists.append(semantic)
+
+        keyword = _bm25_search(q, k=10)
+        if keyword:
+            ranked_lists.append(keyword)
+
+        core = _core_terms(q)
+        if core:
+            keyword_core = _bm25_search(core, k=8)
+            if keyword_core:
+                ranked_lists.append(keyword_core)
+
+    merged = _rrf_merge(ranked_lists)
+
+    # Stage 3: LLM chunk selection
+    if llm_fn and len(merged) > top_k:
+        selected = select_chunks(question, merged, llm_fn, max_select=top_k * 2)
+    else:
+        selected = merged[:top_k * 2]
+
+    # Stage 4: Context expansion
+    expanded = expand_context(selected, vectorstore, window=1)
+
+    # Stage 5: Cross-encoder rerank
+    if _HAS_RERANKER and len(expanded) > top_k:
+        try:
+            passages = [{"id": i, "text": d.page_content} for i, d in enumerate(expanded)]
+            ranked = _ranker.rerank(RerankRequest(query=question, passages=passages))
+            return [expanded[r["id"]] for r in ranked[:top_k]]
+        except Exception:
+            pass
+
+    return expanded[:top_k]

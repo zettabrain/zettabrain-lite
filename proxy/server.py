@@ -39,11 +39,10 @@ VERTEX_BASE = (
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "25"))
 
 MODEL_PREFERENCE = [
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
 ]
 
 _credentials = None

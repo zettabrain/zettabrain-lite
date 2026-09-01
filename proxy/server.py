@@ -19,6 +19,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from typing import Optional
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException
@@ -43,7 +44,7 @@ MODEL_PREFERENCE = [
     "gemini-2.5-flash",
 ]
 
-_resolved_model: str | None = None
+_resolved_model: Optional[str] = None
 _model_resolved_at: float = 0
 MODEL_CACHE_TTL = 3600
 

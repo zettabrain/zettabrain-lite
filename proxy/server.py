@@ -1,17 +1,13 @@
 """
-ZettaBrain Trial Proxy — Rate-limited gateway via Vertex AI.
+ZettaBrain Trial Proxy — Rate-limited gateway for first-run experience.
 
-Uses Google Cloud Vertex AI for Gemini inference, which bills to the
-project's Cloud credits (not the AI Studio prepayment system).
-Auto-discovers available models by trying the preference list.
-
-On Cloud Run, authentication is automatic via the service account.
+Uses Groq's free tier for fast inference. Holds the API key server-side
+and rate-limits each ZettaBrain installation to N requests.
 
 Environment variables:
-  GOOGLE_CLOUD_PROJECT — GCP project ID (auto-set on Cloud Run)
-  VERTEX_LOCATION      — Region (default: us-central1)
-  MAX_REQUESTS         — Max requests per install (default: 25)
-  REDIS_URL            — Optional Redis for persistent rate limiting
+  GROQ_API_KEY   — Your Groq API key (free at console.groq.com)
+  MAX_REQUESTS   — Max requests per install (default: 25)
+  REDIS_URL      — Optional Redis for persistent rate limiting
 """
 
 import json
@@ -21,8 +17,6 @@ import time
 from collections import defaultdict
 from typing import Optional
 
-import google.auth
-import google.auth.transport.requests
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -30,32 +24,19 @@ from fastapi.responses import JSONResponse
 log = logging.getLogger("trial-proxy")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="ZettaBrain Trial Proxy", version="2.0.0")
+app = FastAPI(title="ZettaBrain Trial Proxy", version="3.0.0")
 
-
-@app.on_event("startup")
-async def startup_event():
-    log.info(f"Trial proxy starting on port {os.environ.get('PORT', '8080')}")
-    log.info(f"Project: {os.environ.get('GOOGLE_CLOUD_PROJECT', 'zettabrain')}")
-
-
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "zettabrain")
-LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-VERTEX_CHAT_URL = (
-    f"https://{LOCATION}-aiplatform.googleapis.com/v1beta1"
-    f"/projects/{PROJECT_ID}/locations/{LOCATION}/endpoints/openapi/chat/completions"
-)
+GROQ_API_KEY = os.environ["GROQ_API_KEY"]
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "25"))
 
 MODEL_PREFERENCE = [
-    "google/gemini-3.5-flash-lite",
-    "google/gemini-3.1-flash-lite",
-    "google/gemini-3.5-flash",
-    "google/gemini-3.6-flash",
-    "google/gemini-3.7-flash",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "gemma2-9b-it",
+    "mixtral-8x7b-32768",
 ]
 
-_credentials = None
 _resolved_model: Optional[str] = None
 _model_resolved_at: float = 0
 MODEL_CACHE_TTL = 3600
@@ -63,47 +44,42 @@ MODEL_CACHE_TTL = 3600
 _usage: dict = defaultdict(lambda: {"count": 0, "first_seen": 0})
 
 
-def _get_auth_headers() -> dict:
-    global _credentials
-    if _credentials is None:
-        _credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-    auth_req = google.auth.transport.requests.Request()
-    _credentials.refresh(auth_req)
-    return {
-        "Authorization": f"Bearer {_credentials.token}",
+async def _discover_model() -> str:
+    """Find a working Groq model by trying the preference list."""
+    global _resolved_model, _model_resolved_at
+
+    if _resolved_model and (time.time() - _model_resolved_at) < MODEL_CACHE_TTL:
+        return _resolved_model
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
     }
 
-
-async def _call_vertex(body: dict) -> httpx.Response:
-    """Call Vertex AI, trying models from preference list on failure."""
-    global _resolved_model, _model_resolved_at
-
-    headers = _get_auth_headers()
-
-    if _resolved_model and (time.time() - _model_resolved_at) < MODEL_CACHE_TTL:
-        body["model"] = _resolved_model
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(VERTEX_CHAT_URL, headers=headers, json=body)
-            if resp.status_code == 200:
-                return resp
-            log.warning(f"Cached model {_resolved_model} failed ({resp.status_code}), re-discovering")
-            _resolved_model = None
-
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=15) as client:
         for model in MODEL_PREFERENCE:
-            body["model"] = model
-            resp = await client.post(VERTEX_CHAT_URL, headers=headers, json=body)
-            if resp.status_code == 200:
-                _resolved_model = model
-                _model_resolved_at = time.time()
-                log.info(f"Resolved trial model: {model}")
-                return resp
-            log.info(f"Model {model} returned {resp.status_code}, trying next")
+            try:
+                resp = await client.post(
+                    GROQ_URL,
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 5,
+                    },
+                )
+                if resp.status_code == 200:
+                    _resolved_model = model
+                    _model_resolved_at = time.time()
+                    log.info(f"Resolved trial model: {model}")
+                    return model
+                log.info(f"Model {model} returned {resp.status_code}, trying next")
+            except Exception as e:
+                log.info(f"Model {model} failed: {e}, trying next")
 
-    return resp
+    _resolved_model = MODEL_PREFERENCE[0]
+    _model_resolved_at = time.time()
+    return _resolved_model
 
 
 def _get_usage(install_id: str) -> dict:
@@ -145,14 +121,13 @@ def _incr_usage(install_id: str):
 @app.get("/health")
 async def health():
     model = _resolved_model or "not yet resolved"
-    return {"status": "ok", "model": model, "backend": "vertex-ai"}
+    return {"status": "ok", "model": model, "backend": "groq"}
 
 
 @app.get("/v1/model")
 async def get_model():
     model = _resolved_model or MODEL_PREFERENCE[0]
-    short = model.split("/", 1)[-1] if "/" in model else model
-    return {"model": short}
+    return {"model": model}
 
 
 @app.post("/v1/chat/completions")
@@ -175,26 +150,36 @@ async def proxy_chat(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
+    model = await _discover_model()
+    body["model"] = model
     if body.get("max_tokens", 0) > 2048:
         body["max_tokens"] = 2048
 
     try:
-        response = await _call_vertex(body)
-
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Upstream error: {response.text[:300]}"
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                GROQ_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
             )
 
-        _incr_usage(install_id)
-        result = response.json()
-        result["_trial"] = {
-            "requests_used": usage["count"] + 1,
-            "requests_remaining": MAX_REQUESTS - usage["count"] - 1,
-            "model": _resolved_model,
-        }
-        return JSONResponse(content=result)
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Upstream error: {response.text[:300]}"
+                )
+
+            _incr_usage(install_id)
+            result = response.json()
+            result["_trial"] = {
+                "requests_used": usage["count"] + 1,
+                "requests_remaining": MAX_REQUESTS - usage["count"] - 1,
+                "model": model,
+            }
+            return JSONResponse(content=result)
 
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Upstream timeout")

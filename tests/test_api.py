@@ -1,16 +1,18 @@
 """Basic API smoke tests for ZettaBrain Lite."""
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture
 def app():
     from zettabrain_lite.server import app
+
     return app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -29,7 +31,9 @@ async def test_status_endpoint(client):
 async def test_models_endpoint(client):
     resp = await client.get("/api/models")
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    data = resp.json()
+    assert "models" in data
+    assert isinstance(data["models"], list)
 
 
 @pytest.mark.asyncio

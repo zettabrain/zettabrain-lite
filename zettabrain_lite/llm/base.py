@@ -5,17 +5,12 @@ from typing import Any, Dict, Iterator
 
 
 class LLMProvider(ABC):
-
     @abstractmethod
-    def generate(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> str:
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         pass
 
     @abstractmethod
-    def stream(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> Iterator[str]:
+    def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         pass
 
     @abstractmethod

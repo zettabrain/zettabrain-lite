@@ -43,7 +43,6 @@ PROVIDER_REGISTRY = {
 
 
 class OpenAICompatibleProvider(LLMProvider):
-
     def __init__(
         self,
         provider_name: Optional[str] = None,
@@ -56,16 +55,12 @@ class OpenAICompatibleProvider(LLMProvider):
         registry = PROVIDER_REGISTRY.get(provider_name, {})
 
         self.provider_name = provider_name
-        self.base_url = (
-            base_url or registry.get("base_url", "https://api.groq.com/openai/v1")
-        ).rstrip("/")
+        self.base_url = (base_url or registry.get("base_url", "https://api.groq.com/openai/v1")).rstrip("/")
 
         env_key = registry.get("env_key", "GROQ_API_KEY")
         self.api_key = api_key or os.getenv(env_key)
         if not self.api_key:
-            raise ValueError(
-                f"API key not found. Set {env_key} environment variable or configure in Settings."
-            )
+            raise ValueError(f"API key not found. Set {env_key} environment variable or configure in Settings.")
 
         self.model = model or registry.get("default_model", "llama-3.1-8b-instant")
         self.timeout = timeout
@@ -80,9 +75,7 @@ class OpenAICompatibleProvider(LLMProvider):
             h["X-Title"] = "ZettaBrain Lite"
         return h
 
-    def generate(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> str:
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -108,9 +101,7 @@ class OpenAICompatibleProvider(LLMProvider):
         except httpx.TimeoutException:
             raise RuntimeError(f"{self.provider_name} request timed out after {self.timeout}s")
 
-    def stream(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> Iterator[str]:
+    def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],

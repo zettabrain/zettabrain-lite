@@ -8,7 +8,6 @@ from .models import Skill
 
 
 class SkillParser:
-
     @staticmethod
     def parse_file(file_path: str | Path) -> Skill:
         file_path = Path(file_path)
@@ -37,9 +36,19 @@ class SkillParser:
         }
 
         optional_fields = [
-            "business_type", "author", "requires_corpus", "requires_discovery",
-            "inputs", "outputs", "references", "temperature", "max_tokens",
-            "citation_required", "escalation_triggers", "tags", "deprecated",
+            "business_type",
+            "author",
+            "requires_corpus",
+            "requires_discovery",
+            "inputs",
+            "outputs",
+            "references",
+            "temperature",
+            "max_tokens",
+            "citation_required",
+            "escalation_triggers",
+            "tags",
+            "deprecated",
         ]
         for field in optional_fields:
             if field in metadata:

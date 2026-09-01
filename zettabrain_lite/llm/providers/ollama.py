@@ -10,7 +10,6 @@ from ..base import LLMProvider
 
 
 class OllamaProvider(LLMProvider):
-
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
@@ -21,9 +20,7 @@ class OllamaProvider(LLMProvider):
         self.model = os.getenv("OLLAMA_MODEL", model)
         self.timeout = int(os.getenv("OLLAMA_TIMEOUT", str(timeout)))
 
-    def generate(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> str:
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -41,15 +38,12 @@ class OllamaProvider(LLMProvider):
                 return response.json().get("response", "")
         except httpx.TimeoutException:
             raise RuntimeError(
-                f"Ollama generation timed out after {self.timeout}s. "
-                "Try reducing max_tokens or increasing timeout."
+                f"Ollama generation timed out after {self.timeout}s. Try reducing max_tokens or increasing timeout."
             )
         except httpx.HTTPError as e:
             raise RuntimeError(f"Ollama HTTP error: {e}")
 
-    def stream(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> Iterator[str]:
+    def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -86,9 +80,7 @@ class OllamaProvider(LLMProvider):
     def get_model_info(self) -> Dict[str, Any]:
         try:
             with httpx.Client(timeout=10.0) as client:
-                response = client.post(
-                    f"{self.base_url}/api/show", json={"name": self.model}
-                )
+                response = client.post(f"{self.base_url}/api/show", json={"name": self.model})
                 response.raise_for_status()
                 return {
                     "provider": "ollama",

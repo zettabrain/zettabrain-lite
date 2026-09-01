@@ -13,7 +13,6 @@ GEMINI_DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 
 class GeminiProvider(LLMProvider):
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -22,9 +21,7 @@ class GeminiProvider(LLMProvider):
     ):
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
-            raise ValueError(
-                "Google API key not found. Set GEMINI_API_KEY or configure in Settings."
-            )
+            raise ValueError("Google API key not found. Set GEMINI_API_KEY or configure in Settings.")
         self.model = model or GEMINI_DEFAULT_MODEL
         self.base_url = GEMINI_BASE_URL
         self.timeout = timeout
@@ -35,9 +32,7 @@ class GeminiProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
-    def generate(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> str:
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -63,9 +58,7 @@ class GeminiProvider(LLMProvider):
         except httpx.TimeoutException:
             raise RuntimeError(f"Gemini request timed out after {self.timeout}s")
 
-    def stream(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> Iterator[str]:
+    def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],

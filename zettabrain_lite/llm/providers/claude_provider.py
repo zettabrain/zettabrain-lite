@@ -7,7 +7,6 @@ from ..base import LLMProvider
 
 
 class ClaudeProvider(LLMProvider):
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -20,9 +19,7 @@ class ClaudeProvider(LLMProvider):
         self.model = model or "claude-sonnet-4-6"
         self.timeout = timeout
 
-    def generate(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> str:
+    def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         import anthropic
 
         client = anthropic.Anthropic(api_key=self.api_key, timeout=self.timeout)
@@ -33,9 +30,7 @@ class ClaudeProvider(LLMProvider):
         )
         return message.content[0].text
 
-    def stream(
-        self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs
-    ) -> Iterator[str]:
+    def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         import anthropic
 
         client = anthropic.Anthropic(api_key=self.api_key, timeout=self.timeout)
@@ -50,6 +45,7 @@ class ClaudeProvider(LLMProvider):
     def check_health(self) -> bool:
         try:
             import anthropic
+
             client = anthropic.Anthropic(api_key=self.api_key, timeout=10)
             client.messages.count_tokens(
                 model=self.model,

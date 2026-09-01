@@ -9,7 +9,6 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseLLM
 
 from .base import LLMProvider
-from .providers.openai_compatible import PROVIDER_REGISTRY
 
 CLOUD_PROVIDERS = {
     "groq": "https://api.groq.com/openai/v1",
@@ -42,6 +41,7 @@ def get_chat_llm(
         if not ollama_host:
             raise ValueError("ollama_host is required for Ollama provider")
         from langchain_ollama import OllamaLLM
+
         llm = OllamaLLM(model=model, base_url=ollama_host, temperature=0.0, num_predict=1024)
 
     elif provider in CLOUD_PROVIDERS:
@@ -51,6 +51,7 @@ def get_chat_llm(
         if not api_key:
             raise ValueError(f"API key required for {provider}. Configure in Settings.")
         from langchain_openai import ChatOpenAI
+
         llm = ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -63,12 +64,14 @@ def get_chat_llm(
         if not api_key:
             raise ValueError("API key required for OpenAI. Configure in Settings.")
         from langchain_openai import ChatOpenAI
+
         llm = ChatOpenAI(model=model, api_key=api_key, temperature=0.0, max_tokens=1024)
 
     elif provider == "claude":
         if not api_key:
             raise ValueError("API key required for Claude. Configure in Settings.")
         from langchain_anthropic import ChatAnthropic
+
         llm = ChatAnthropic(model=model, api_key=api_key, max_tokens=1024)
 
     elif provider == "gemini":
@@ -77,6 +80,7 @@ def get_chat_llm(
         if not api_key:
             raise ValueError("API key required for Gemini. Configure in Settings.")
         from langchain_openai import ChatOpenAI
+
         llm = ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -113,11 +117,13 @@ def get_embeddings(
         if not ollama_host:
             raise ValueError("ollama_host is required for Ollama embeddings")
         from langchain_ollama import OllamaEmbeddings
+
         embeddings = OllamaEmbeddings(model=model, base_url=ollama_host)
     elif provider == "openai":
         if not openai_key:
             raise ValueError("API key required for OpenAI embeddings. Configure in Settings.")
         from langchain_openai import OpenAIEmbeddings
+
         embeddings = OpenAIEmbeddings(model=model, api_key=openai_key)
 
     _embed_cache[cache_key] = embeddings
@@ -132,12 +138,13 @@ def create_generation_provider(
     **kwargs,
 ) -> LLMProvider:
     """Create a direct LLM provider for document generation (streaming support)."""
-    from ..config import get_setting, OLLAMA_HOST
+    from ..config import OLLAMA_HOST, get_setting
 
     provider_name = provider_name or get_setting("llm_provider") or "ollama"
 
     if provider_name == "ollama":
         from .providers.ollama import OllamaProvider
+
         return OllamaProvider(
             base_url=base_url or get_setting("ollama_host") or OLLAMA_HOST,
             model=model or get_setting("llm_model") or "llama3.1:8b",
@@ -146,6 +153,7 @@ def create_generation_provider(
 
     elif provider_name in ("groq", "together", "cerebras", "openrouter", "fireworks", "openai"):
         from .providers.openai_compatible import OpenAICompatibleProvider
+
         resolved_key = api_key or get_setting(f"{provider_name}_api_key")
         resolved_model = model or get_setting(f"{provider_name}_model")
         oai_kwargs = {"provider_name": provider_name}
@@ -160,6 +168,7 @@ def create_generation_provider(
 
     elif provider_name in ("claude", "anthropic"):
         from .providers.claude_provider import ClaudeProvider
+
         return ClaudeProvider(
             api_key=api_key or get_setting("anthropic_api_key"),
             model=model or get_setting("claude_model") or "claude-sonnet-4-6",
@@ -168,6 +177,7 @@ def create_generation_provider(
 
     elif provider_name == "gemini":
         from .providers.gemini_provider import GeminiProvider
+
         return GeminiProvider(
             api_key=api_key or get_setting("gemini_api_key"),
             model=model or get_setting("gemini_model") or "gemini-3.5-flash-lite",

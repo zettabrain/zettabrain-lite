@@ -22,30 +22,35 @@ import os
 import time
 from pathlib import Path
 
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
+from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
+from langchain_ollama import OllamaEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 try:
     from zettabrain_lite.retrieval import rebuild_bm25_index
+
     _HAS_RETRIEVAL = True
 except ImportError:
     try:
         from zettabrain_rag.retrieval import rebuild_bm25_index
+
         _HAS_RETRIEVAL = True
     except ImportError:
         _HAS_RETRIEVAL = False
 
 try:
     from zettabrain_lite.storage_profile import get_chunk_profile as _get_chunk_profile
+
     _HAS_STORAGE_PROFILE = True
 except ImportError:
     try:
         from zettabrain_rag.storage_profile import get_chunk_profile as _get_chunk_profile
+
         _HAS_STORAGE_PROFILE = True
     except ImportError:
         _HAS_STORAGE_PROFILE = False
+
 
 # -------------------------------------------------------
 # CONFIGURATION
@@ -71,10 +76,13 @@ def _load_zettabrain_env() -> dict:
             break
     return cfg
 
+
 _cfg = _load_zettabrain_env()
+
 
 def _get(key, fallback):
     return os.environ.get(key) or _cfg.get(key) or fallback
+
 
 def _default_chroma() -> str:
     if os.name == "nt":
@@ -82,10 +90,12 @@ def _default_chroma() -> str:
         return os.path.join(local_app, "ZettaBrain", "zettabrain_vectorstore")
     return "/opt/zettabrain/src/zettabrain_vectorstore"
 
+
 def _default_docs() -> str:
     if os.name == "nt":
         return os.path.join(os.path.expanduser("~"), "Documents")
     return "/opt/zettabrain/data"
+
 
 def _default_hash_cache() -> str:
     if os.name == "nt":
@@ -93,10 +103,11 @@ def _default_hash_cache() -> str:
         return os.path.join(local_app, "ZettaBrain", "ingested_files.json")
     return "./ingested_files.json"
 
-DOCS_FOLDER      = _get("ZETTABRAIN_DOCS",    _get("RAG_DATA_PATH", _default_docs()))
-CHROMA_PATH      = _get("ZETTABRAIN_CHROMA",  _default_chroma())
-EMBED_MODEL      = os.environ.get("ZETTABRAIN_EMBED_MODEL", "nomic-embed-text")
-HASH_CACHE       = _default_hash_cache()
+
+DOCS_FOLDER = _get("ZETTABRAIN_DOCS", _get("RAG_DATA_PATH", _default_docs()))
+CHROMA_PATH = _get("ZETTABRAIN_CHROMA", _default_chroma())
+EMBED_MODEL = os.environ.get("ZETTABRAIN_EMBED_MODEL", "nomic-embed-text")
+HASH_CACHE = _default_hash_cache()
 INGEST_ERROR_LOG = str(Path(CHROMA_PATH).parent / "ingest_errors.log")
 
 SUPPORTED = {".pdf", ".txt", ".docx", ".md"}
@@ -136,16 +147,15 @@ def _load_pdf(filepath: str):
     """Try PyMuPDF first (better layout handling), fall back to pypdf."""
     try:
         import fitz  # pymupdf
+
         docs = []
         pdf = fitz.open(filepath)
         for page_num, page in enumerate(pdf):
             text = page.get_text("text").strip()
             if text:
                 from langchain_core.documents import Document
-                docs.append(Document(
-                    page_content=text,
-                    metadata={"source": filepath, "page": page_num}
-                ))
+
+                docs.append(Document(page_content=text, metadata={"source": filepath, "page": page_num}))
         pdf.close()
         if docs:
             return docs
@@ -202,13 +212,11 @@ def _adaptive_splitter(filepath: str, docs) -> RecursiveCharacterTextSplitter:
     sample = " ".join(d.page_content for d in docs[:5])
     sentences = [s.strip() for s in sample.replace("\n", " ").split(".") if s.strip()]
     if sentences and sum(len(s) for s in sentences) / len(sentences) > 120:
-        size    = int(size    * 1.5)
+        size = int(size * 1.5)
         overlap = int(overlap * 1.5)
 
     return RecursiveCharacterTextSplitter(
-        chunk_size=size,
-        chunk_overlap=overlap,
-        separators=["\n\n\n", "\n\n", "\n", ". ", " ", ""]
+        chunk_size=size, chunk_overlap=overlap, separators=["\n\n\n", "\n\n", "\n", ". ", " ", ""]
     )
 
 
@@ -243,8 +251,8 @@ def ingest_file(filepath: str, vectorstore, hash_cache: dict, profile: dict | No
 
     storage_type = (profile or _DEFAULT_PROFILE)["storage_type"]
     for chunk in chunks:
-        chunk.metadata["source"]       = filepath
-        chunk.metadata["filename"]     = Path(filepath).name
+        chunk.metadata["source"] = filepath
+        chunk.metadata["filename"] = Path(filepath).name
         chunk.metadata["storage_type"] = storage_type
 
     # Embed in small batches with retry so one Ollama hiccup doesn't abort the file
@@ -258,9 +266,9 @@ def ingest_file(filepath: str, vectorstore, hash_cache: dict, profile: dict | No
                 break
             except Exception as e:
                 if attempt == 2:
-                    print(f"  [WARN] {Path(filepath).name} batch {i//BATCH_SIZE + 1} failed: {e}")
+                    print(f"  [WARN] {Path(filepath).name} batch {i // BATCH_SIZE + 1} failed: {e}")
                 else:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
 
     if added == 0:
         reason = "no chunks embedded after splitting (document may be corrupt or too short)"
@@ -278,25 +286,24 @@ def ingest_file(filepath: str, vectorstore, hash_cache: dict, profile: dict | No
 # -------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="ZettaBrain Document Ingestion")
-    parser.add_argument("--folder", default=DOCS_FOLDER,
-                        help=f"Ingest all supported files in a folder (default: {DOCS_FOLDER})")
-    parser.add_argument("--file",   default=None, help="Ingest a single file")
-    parser.add_argument("--clear",  action="store_true", help="Clear the entire vector store")
-    parser.add_argument("--stats",  action="store_true", help="Show vector store statistics")
+    parser.add_argument(
+        "--folder", default=DOCS_FOLDER, help=f"Ingest all supported files in a folder (default: {DOCS_FOLDER})"
+    )
+    parser.add_argument("--file", default=None, help="Ingest a single file")
+    parser.add_argument("--clear", action="store_true", help="Clear the entire vector store")
+    parser.add_argument("--stats", action="store_true", help="Show vector store statistics")
     args = parser.parse_args()
 
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-    embeddings  = OllamaEmbeddings(model=EMBED_MODEL, base_url=ollama_host)
+    embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=ollama_host)
     os.makedirs(CHROMA_PATH, exist_ok=True)
     vectorstore = Chroma(
-        persist_directory=CHROMA_PATH,
-        embedding_function=embeddings,
-        collection_name="zettabrain_docs"
+        persist_directory=CHROMA_PATH, embedding_function=embeddings, collection_name="zettabrain_docs"
     )
 
     # ---- Stats ----
     if args.stats:
-        count      = vectorstore._collection.count()
+        count = vectorstore._collection.count()
         hash_cache = load_hash_cache()
         print(f"\nVector store : {CHROMA_PATH}")
         print(f"Total chunks : {count}")
@@ -319,7 +326,7 @@ def main():
 
     # ---- Ingest ----
     hash_cache = load_hash_cache()
-    ingested   = 0
+    ingested = 0
 
     if args.file:
         profile = _get_storage_profile(str(Path(args.file).parent))

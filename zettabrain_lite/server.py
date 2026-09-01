@@ -16,18 +16,27 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import (
-    BASE_DIR, CHROMA_DIR, DATA_DIR, SKILLS_DIR, STORAGE_CONF,
-    OLLAMA_HOST, LLM_MODEL, EMBED_MODEL,
-    load_config, save_config, get_setting, set_setting,
+    BASE_DIR,
+    CHROMA_DIR,
+    DATA_DIR,
+    EMBED_MODEL,
+    LLM_MODEL,
+    OLLAMA_HOST,
+    SKILLS_DIR,
+    STORAGE_CONF,
+    get_setting,
+    load_config,
+    save_config,
+    set_setting,
 )
-from .retrieval import hybrid_retrieve, advanced_retrieve, RAG_PROMPT, ADVANCED_RAG_PROMPT, format_context
+from .retrieval import ADVANCED_RAG_PROMPT, advanced_retrieve, format_context, hybrid_retrieve
 
 PKG_DIR = Path(__file__).parent
 STATIC_DIR = PKG_DIR / "static"
@@ -42,8 +51,8 @@ _vs_cache: dict = {"vs": None}
 def _get_vs():
     with _vs_lock:
         if _vs_cache["vs"] is None:
-            from langchain_ollama import OllamaEmbeddings
             from langchain_chroma import Chroma
+            from langchain_ollama import OllamaEmbeddings
 
             cfg = load_config()
             embed_provider = cfg.get("embed_provider", "ollama")
@@ -54,6 +63,7 @@ def _get_vs():
                 emb = OllamaEmbeddings(model=embed_model, base_url=ollama_host)
             elif embed_provider == "openai":
                 from langchain_openai import OpenAIEmbeddings
+
                 emb = OpenAIEmbeddings(model=embed_model, api_key=cfg.get("openai_api_key"))
             else:
                 emb = OllamaEmbeddings(model=embed_model, base_url=ollama_host)
@@ -75,11 +85,16 @@ def _reset_vs_cache():
 def _get_gpu_info() -> dict:
     info = {"type": "none", "name": None, "vram_gb": 0, "recommended_model": None}
     try:
-        out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=name,memory.total",
-             "--format=csv,noheader,nounits"],
-            stderr=subprocess.DEVNULL, timeout=5
-        ).decode().strip().splitlines()[0]
+        out = (
+            subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            .decode()
+            .strip()
+            .splitlines()[0]
+        )
         name, vram_mb = [s.strip() for s in out.split(",")]
         vram_gb = int(vram_mb) // 1024
         info.update({"type": "nvidia", "name": name, "vram_gb": vram_gb})
@@ -92,6 +107,7 @@ def _get_gpu_info() -> dict:
                 ["rocm-smi", "--showmeminfo", "vram"], stderr=subprocess.DEVNULL, timeout=5
             ).decode()
             import re
+
             m = re.search(r"(\d+)\s*MB", out)
             if m:
                 info.update({"type": "amd", "vram_gb": int(m.group(1)) // 1024})
@@ -101,8 +117,7 @@ def _get_gpu_info() -> dict:
     if info["type"] == "none":
         try:
             if subprocess.check_output(["uname", "-m"]).decode().strip() == "arm64":
-                mem = int(subprocess.check_output(
-                    ["sysctl", "-n", "hw.memsize"]).decode().strip())
+                mem = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"]).decode().strip())
                 info.update({"type": "apple_silicon", "vram_gb": mem // 1_073_741_824})
         except Exception:
             pass
@@ -140,6 +155,7 @@ def _ollama_running() -> bool:
 def _get_chunk_count() -> int:
     try:
         import chromadb
+
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
         return client.get_collection("zettabrain_docs").count()
     except Exception:
@@ -174,6 +190,7 @@ def _get_available_models() -> list:
     # Trial model (first in list if available)
     try:
         from .trial import get_trial_model_entry
+
         trial_entry = get_trial_model_entry()
         if trial_entry:
             models.append(trial_entry)
@@ -233,12 +250,14 @@ def _get_storage_sources() -> list:
                 continue
             parts = line.split("|")
             if len(parts) >= 4:
-                sources.append({
-                    "role": parts[0].strip(),
-                    "type": parts[1].strip(),
-                    "label": parts[2].strip(),
-                    "path": parts[3].strip(),
-                })
+                sources.append(
+                    {
+                        "role": parts[0].strip(),
+                        "type": parts[1].strip(),
+                        "label": parts[2].strip(),
+                        "path": parts[3].strip(),
+                    }
+                )
     if not sources:
         cfg = load_config()
         docs_folder = cfg.get("docs_folder", str(DATA_DIR / "documents"))
@@ -417,6 +436,7 @@ async def get_models():
 async def trial_status():
     try:
         from .trial import get_trial_usage
+
         return get_trial_usage()
     except Exception:
         return {"requests_used": 0, "requests_remaining": 0, "max_requests": 5, "exhausted": True}
@@ -465,6 +485,7 @@ async def upload_logo(request: Request):
         filename = file.filename or "logo.png"
     else:
         import base64
+
         body = await request.json()
         logo_bytes = base64.b64decode(body.get("data", ""))
         filename = body.get("filename", "logo.png")
@@ -492,6 +513,7 @@ async def get_logo():
         raise HTTPException(status_code=404, detail="Logo file not found")
 
     from fastapi.responses import FileResponse
+
     return FileResponse(logo_path)
 
 
@@ -523,8 +545,9 @@ def _mount_nfs(server_ip: str, export_path: str, mount_point: str, nfs_version: 
     return ""
 
 
-def _mount_smb(server_ip: str, share_name: str, mount_point: str,
-               username: str = "guest", password: str = "", domain: str = "") -> str:
+def _mount_smb(
+    server_ip: str, share_name: str, mount_point: str, username: str = "guest", password: str = "", domain: str = ""
+) -> str:
     Path(mount_point).mkdir(parents=True, exist_ok=True)
     creds_dir = Path("/etc/zettabrain")
     creds_dir.mkdir(parents=True, exist_ok=True)
@@ -575,8 +598,12 @@ async def add_storage(body: StorageAddRequest):
         if not _validate_ip(body.server_ip):
             raise HTTPException(status_code=400, detail="Invalid IP address format")
         error = _mount_smb(
-            body.server_ip, body.share_name, body.mount_point,
-            body.username or "guest", body.password or "", body.domain or "",
+            body.server_ip,
+            body.share_name,
+            body.mount_point,
+            body.username or "guest",
+            body.password or "",
+            body.domain or "",
         )
         final_path = body.mount_point
 
@@ -601,9 +628,7 @@ async def add_storage(body: StorageAddRequest):
     with open(STORAGE_CONF, "a", encoding="utf-8") as f:
         f.write(line)
 
-    return {"success": True, "source": {
-        "role": body.role, "type": body.type, "label": body.label, "path": final_path
-    }}
+    return {"success": True, "source": {"role": body.role, "type": body.type, "label": body.label, "path": final_path}}
 
 
 @app.post("/api/storage/test")
@@ -618,7 +643,9 @@ async def test_storage(body: StorageAddRequest):
             return {"reachable": False, "message": "Server IP required"}
         result = subprocess.run(
             ["ping", "-c", "1", "-W", "3", body.server_ip],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         reachable = result.returncode == 0
         return {"reachable": reachable, "message": f"Server {'reachable' if reachable else 'unreachable'}"}
@@ -628,7 +655,9 @@ async def test_storage(body: StorageAddRequest):
             return {"reachable": False, "message": "Server IP required"}
         result = subprocess.run(
             ["ping", "-c", "1", "-W", "3", body.server_ip],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         reachable = result.returncode == 0
         return {"reachable": reachable, "message": f"Server {'reachable' if reachable else 'unreachable'}"}
@@ -640,8 +669,11 @@ async def test_storage(body: StorageAddRequest):
 async def remove_storage(index: int):
     if not STORAGE_CONF.exists():
         raise HTTPException(status_code=404, detail="No storage sources configured")
-    lines = [l for l in STORAGE_CONF.read_text(encoding="utf-8").splitlines()
-             if l.strip() and not l.startswith("#")]
+    lines = [
+        line
+        for line in STORAGE_CONF.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
     if index < 0 or index >= len(lines):
         raise HTTPException(status_code=404, detail="Source not found")
     lines.pop(index)
@@ -661,11 +693,11 @@ async def pull_model(req: PullRequest):
             resp = requests.post(
                 f"{ollama_url}/api/pull",
                 json={"name": req.model, "stream": True},
-                stream=True, timeout=600,
+                stream=True,
+                timeout=600,
             )
             if resp.status_code != 200:
-                asyncio.run_coroutine_threadsafe(
-                    queue.put(f"Error: Ollama returned {resp.status_code}\n"), loop)
+                asyncio.run_coroutine_threadsafe(queue.put(f"Error: Ollama returned {resp.status_code}\n"), loop)
                 return
             for line in resp.iter_lines():
                 if not line:
@@ -729,8 +761,12 @@ async def ingest(req: IngestRequest):
 
     try:
         result = subprocess.run(
-            cmd, cwd=str(DATA_DIR),
-            capture_output=True, text=True, timeout=600, env=env,
+            cmd,
+            cwd=str(DATA_DIR),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
         )
         if result.returncode == 0:
             _reset_vs_cache()
@@ -776,8 +812,11 @@ async def chat(req: ChatRequest):
         try:
             if provider == "trial":
                 from .trial import trial_generate
-                llm_fn = lambda p: trial_generate(p, temperature=0.0, max_tokens=256)
+
+                def llm_fn(p):
+                    return trial_generate(p, temperature=0.0, max_tokens=256)
             elif provider == "ollama":
+
                 def _ollama_fn(p):
                     resp = requests.post(
                         f"{ollama_host}/api/generate",
@@ -787,13 +826,17 @@ async def chat(req: ChatRequest):
                     if resp.status_code == 200:
                         return resp.json().get("response", "")
                     return ""
+
                 llm_fn = _ollama_fn
             else:
                 from .llm.factory import get_chat_llm as _gcl
+
                 _rag_llm = _gcl(provider=provider, model=model, ollama_host=ollama_host, api_key=api_key)
+
                 def _cloud_fn(p):
                     r = _rag_llm.invoke(p)
-                    return r.content.strip() if hasattr(r, 'content') else str(r).strip()
+                    return r.content.strip() if hasattr(r, "content") else str(r).strip()
+
                 llm_fn = _cloud_fn
         except Exception:
             pass
@@ -809,19 +852,23 @@ async def chat(req: ChatRequest):
 
         if provider == "trial":
             from .trial import trial_generate
+
             answer = trial_generate(prompt_text, temperature=0.0, max_tokens=1024)
         else:
             from .llm.factory import get_chat_llm
 
             llm = get_chat_llm(
-                provider=provider, model=model,
-                ollama_host=ollama_host, api_key=api_key,
+                provider=provider,
+                model=model,
+                ollama_host=ollama_host,
+                api_key=api_key,
             )
 
             from langchain_core.prompts import PromptTemplate
+
             prompt = PromptTemplate.from_template(ADVANCED_RAG_PROMPT)
             response = llm.invoke(prompt.format(context=context, question=question))
-            if hasattr(response, 'content'):
+            if hasattr(response, "content"):
                 answer = response.content.strip()
             else:
                 answer = str(response).strip()
@@ -834,16 +881,19 @@ async def chat(req: ChatRequest):
         sources, answer, t_retr, t_gen = await loop.run_in_executor(None, _run)
 
         # Save to history
-        from .database import get_session, ChatHistory
+        from .database import ChatHistory, get_session
+
         with get_session() as session:
-            session.add(ChatHistory(
-                question=req.question,
-                answer=answer,
-                model=model_id,
-                chunks_searched=len(sources),
-                duration_ms=round((t_retr + t_gen) * 1000),
-                sources=json.dumps([Path(s.metadata.get("source", "?")).name for s in sources]),
-            ))
+            session.add(
+                ChatHistory(
+                    question=req.question,
+                    answer=answer,
+                    model=model_id,
+                    chunks_searched=len(sources),
+                    duration_ms=round((t_retr + t_gen) * 1000),
+                    sources=json.dumps([Path(s.metadata.get("source", "?")).name for s in sources]),
+                )
+            )
             session.commit()
 
         return {
@@ -855,9 +905,11 @@ async def chat(req: ChatRequest):
                 "generate_ms": round(t_gen * 1000),
             },
             "sources": [
-                {"filename": Path(s.metadata.get("source", "?")).name,
-                 "page": s.metadata.get("page", ""),
-                 "preview": s.page_content[:200]}
+                {
+                    "filename": Path(s.metadata.get("source", "?")).name,
+                    "page": s.metadata.get("page", ""),
+                    "preview": s.page_content[:200],
+                }
                 for s in sources
             ],
         }
@@ -879,7 +931,9 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "message": "Empty question"})
                 continue
             if _get_chunk_count() == 0:
-                await websocket.send_json({"type": "error", "message": "Vector store is empty. Ingest documents first."})
+                await websocket.send_json(
+                    {"type": "error", "message": "Vector store is empty. Ingest documents first."}
+                )
                 continue
 
             provider, model, api_key, ollama_host = _resolve_llm_for_chat(model_id)
@@ -893,9 +947,12 @@ async def websocket_chat(websocket: WebSocket):
                 try:
                     if provider == "trial":
                         from .trial import trial_generate as _tg
-                        ws_llm_fn = lambda p: _tg(p, temperature=0.0, max_tokens=256)
+
+                        def ws_llm_fn(p):
+                            return _tg(p, temperature=0.0, max_tokens=256)
                     elif provider == "ollama":
                         _oh, _m = ollama_host, model
+
                         def _ws_ollama_fn(p):
                             resp = requests.post(
                                 f"{_oh}/api/generate",
@@ -903,13 +960,17 @@ async def websocket_chat(websocket: WebSocket):
                                 timeout=30,
                             )
                             return resp.json().get("response", "") if resp.status_code == 200 else ""
+
                         ws_llm_fn = _ws_ollama_fn
                     else:
                         from .llm.factory import get_chat_llm as _gcl2
+
                         _ws_llm = _gcl2(provider=provider, model=model, ollama_host=ollama_host, api_key=api_key)
+
                         def _ws_cloud_fn(p):
                             r = _ws_llm.invoke(p)
-                            return r.content.strip() if hasattr(r, 'content') else str(r).strip()
+                            return r.content.strip() if hasattr(r, "content") else str(r).strip()
+
                         ws_llm_fn = _ws_cloud_fn
                 except Exception:
                     pass
@@ -920,9 +981,11 @@ async def websocket_chat(websocket: WebSocket):
                 )
                 t_retr = time.monotonic() - t_r0
                 source_list = [
-                    {"filename": Path(s.metadata.get("source", "?")).name,
-                     "page": s.metadata.get("page", ""),
-                     "preview": s.page_content[:200]}
+                    {
+                        "filename": Path(s.metadata.get("source", "?")).name,
+                        "page": s.metadata.get("page", ""),
+                        "preview": s.page_content[:200],
+                    }
                     for s in sources
                 ]
                 await websocket.send_json({"type": "sources", "sources": source_list})
@@ -933,6 +996,7 @@ async def websocket_chat(websocket: WebSocket):
                 # Stream based on provider
                 if provider == "trial":
                     from .trial import trial_generate
+
                     t_g0 = time.monotonic()
                     full_answer = ""
                     error_msg = None
@@ -954,30 +1018,28 @@ async def websocket_chat(websocket: WebSocket):
                             resp = requests.post(
                                 f"{ollama_host}/api/generate",
                                 json={"model": model, "prompt": prompt_text, "stream": True},
-                                stream=True, timeout=600,
+                                stream=True,
+                                timeout=600,
                             )
                             if resp.status_code != 200:
                                 asyncio.run_coroutine_threadsafe(
-                                    queue.put(("error", f"Ollama {resp.status_code}")), loop)
+                                    queue.put(("error", f"Ollama {resp.status_code}")), loop
+                                )
                                 return
                             for line in resp.iter_lines():
                                 if line:
                                     chunk = json.loads(line)
                                     if "error" in chunk:
-                                        asyncio.run_coroutine_threadsafe(
-                                            queue.put(("error", chunk["error"])), loop)
+                                        asyncio.run_coroutine_threadsafe(queue.put(("error", chunk["error"])), loop)
                                         return
                                     token = chunk.get("response", "")
-                                    asyncio.run_coroutine_threadsafe(
-                                        queue.put(("token", token)), loop)
+                                    asyncio.run_coroutine_threadsafe(queue.put(("token", token)), loop)
                                     if chunk.get("done"):
                                         break
                         except Exception as exc:
-                            asyncio.run_coroutine_threadsafe(
-                                queue.put(("error", str(exc))), loop)
+                            asyncio.run_coroutine_threadsafe(queue.put(("error", str(exc))), loop)
                         finally:
-                            asyncio.run_coroutine_threadsafe(
-                                queue.put(("done", None)), loop)
+                            asyncio.run_coroutine_threadsafe(queue.put(("done", None)), loop)
 
                     loop.run_in_executor(None, _stream_ollama)
 
@@ -997,9 +1059,12 @@ async def websocket_chat(websocket: WebSocket):
                 else:
                     # Cloud providers: use LLM factory streaming
                     from .llm.factory import create_generation_provider
+
                     t_g0 = time.monotonic()
                     gen_provider = create_generation_provider(
-                        provider_name=provider, model=model, api_key=api_key,
+                        provider_name=provider,
+                        model=model,
+                        api_key=api_key,
                     )
                     full_answer = ""
                     error_msg = None
@@ -1022,26 +1087,33 @@ async def websocket_chat(websocket: WebSocket):
                 t_gen = time.monotonic() - t_g0
 
                 # Save to history
-                from .database import get_session, ChatHistory
+                from .database import ChatHistory, get_session
+
                 with get_session() as session:
-                    session.add(ChatHistory(
-                        question=question, answer=full_answer, model=model_id,
-                        chunks_searched=len(sources),
-                        duration_ms=round((t_retr + t_gen) * 1000),
-                        sources=json.dumps([s["filename"] for s in source_list]),
-                    ))
+                    session.add(
+                        ChatHistory(
+                            question=question,
+                            answer=full_answer,
+                            model=model_id,
+                            chunks_searched=len(sources),
+                            duration_ms=round((t_retr + t_gen) * 1000),
+                            sources=json.dumps([s["filename"] for s in source_list]),
+                        )
+                    )
                     session.commit()
 
-                await websocket.send_json({
-                    "type": "done",
-                    "answer": full_answer,
-                    "model": model_id,
-                    "chunks_searched": len(sources),
-                    "timing": {
-                        "retrieve_ms": round(t_retr * 1000),
-                        "generate_ms": round(t_gen * 1000),
-                    },
-                })
+                await websocket.send_json(
+                    {
+                        "type": "done",
+                        "answer": full_answer,
+                        "model": model_id,
+                        "chunks_searched": len(sources),
+                        "timing": {
+                            "retrieve_ms": round(t_retr * 1000),
+                            "generate_ms": round(t_gen * 1000),
+                        },
+                    }
+                )
 
             except Exception as e:
                 msg = str(e)
@@ -1061,6 +1133,7 @@ _BUILTIN_SKILLS_DIR = PKG_DIR / "skills"
 @app.get("/api/skills")
 async def list_skills():
     from .generation.skill_parser import SkillParser
+
     seen_names = set()
     skills = []
 
@@ -1072,14 +1145,16 @@ async def list_skills():
                 skill = SkillParser.parse_file(f)
                 if skill.name not in seen_names:
                     seen_names.add(skill.name)
-                    skills.append({
-                        "name": skill.name,
-                        "version": skill.version,
-                        "description": skill.description,
-                        "business_type": skill.business_type,
-                        "requires_corpus": skill.requires_corpus,
-                        "tags": skill.tags,
-                    })
+                    skills.append(
+                        {
+                            "name": skill.name,
+                            "version": skill.version,
+                            "description": skill.description,
+                            "business_type": skill.business_type,
+                            "requires_corpus": skill.requires_corpus,
+                            "tags": skill.tags,
+                        }
+                    )
             except Exception:
                 continue
 
@@ -1088,9 +1163,9 @@ async def list_skills():
 
 @app.post("/api/generate")
 async def generate_document(body: GenerateBody):
-    from .generation.skill_parser import SkillParser, load_skill
     from .generation.engine import GenerationEngine
     from .generation.models import GenerationRequest
+    from .generation.skill_parser import load_skill
 
     skill_file = _find_skill_file(body.skill_name)
     if not skill_file:
@@ -1106,22 +1181,27 @@ async def generate_document(body: GenerateBody):
     provider, model, api_key, ollama_host = _resolve_llm_for_chat(model_id)
 
     if provider == "trial":
-        from .trial import trial_generate as _trial_gen, _get_trial_model
         from .llm.base import LLMProvider as _LP
+        from .trial import _get_trial_model
+        from .trial import trial_generate as _trial_gen
 
         class _TrialProvider(_LP):
             def generate(self, prompt, temperature=0.7, max_tokens=2000, **kw):
                 return _trial_gen(prompt, temperature=temperature, max_tokens=max_tokens)
+
             def stream(self, prompt, temperature=0.7, max_tokens=2000, **kw):
                 yield self.generate(prompt, temperature, max_tokens)
+
             def check_health(self):
                 return True
+
             def get_model_info(self):
                 return {"provider": "trial", "model": _get_trial_model()}
 
         llm_provider = _TrialProvider()
     else:
         from .llm.factory import create_generation_provider
+
         gen_kwargs = {"provider_name": provider, "model": model}
         if api_key:
             gen_kwargs["api_key"] = api_key
@@ -1145,7 +1225,8 @@ async def generate_document(body: GenerateBody):
         raise HTTPException(status_code=500, detail=f"Generation failed: {result.error}")
 
     # Save to history
-    from .database import get_session, GenerationHistory
+    from .database import GenerationHistory, get_session
+
     with get_session() as session:
         record = GenerationHistory(
             skill_name=result.skill_name,
@@ -1172,8 +1253,9 @@ async def generate_document(body: GenerateBody):
 
 @app.post("/api/skills/upload")
 async def upload_skill(body: SkillUploadBody):
-    from .generation.skill_parser import SkillParser
     import tempfile
+
+    from .generation.skill_parser import SkillParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as tmp:
         tmp.write(body.content)
@@ -1192,14 +1274,20 @@ async def upload_skill(body: SkillUploadBody):
     skill_path = SKILLS_DIR / filename
     skill_path.write_text(body.content, encoding="utf-8")
 
-    return {"message": f"Skill '{skill.name}' uploaded", "skill": {
-        "name": skill.name, "version": skill.version, "description": skill.description,
-    }}
+    return {
+        "message": f"Skill '{skill.name}' uploaded",
+        "skill": {
+            "name": skill.name,
+            "version": skill.version,
+            "description": skill.description,
+        },
+    }
 
 
 @app.delete("/api/skills/{skill_name}")
 async def delete_skill(skill_name: str):
     from .generation.skill_parser import SkillParser
+
     if not SKILLS_DIR.exists():
         raise HTTPException(status_code=404, detail="Skill not found")
     for f in SKILLS_DIR.glob("*.md"):
@@ -1217,14 +1305,19 @@ async def delete_skill(skill_name: str):
 @app.get("/api/history/chat")
 async def chat_history(limit: int = 50):
     from sqlmodel import select
-    from .database import get_session, ChatHistory
+
+    from .database import ChatHistory, get_session
+
     with get_session() as session:
-        rows = session.exec(
-            select(ChatHistory).order_by(ChatHistory.created_at.desc()).limit(limit)
-        ).all()
+        rows = session.exec(select(ChatHistory).order_by(ChatHistory.created_at.desc()).limit(limit)).all()
     return [
-        {"id": r.id, "question": r.question[:200], "answer": r.answer[:300],
-         "model": r.model, "created_at": r.created_at.isoformat()}
+        {
+            "id": r.id,
+            "question": r.question[:200],
+            "answer": r.answer[:300],
+            "model": r.model,
+            "created_at": r.created_at.isoformat(),
+        }
         for r in rows
     ]
 
@@ -1232,21 +1325,27 @@ async def chat_history(limit: int = 50):
 @app.get("/api/history/generation")
 async def generation_history(limit: int = 50):
     from sqlmodel import select
-    from .database import get_session, GenerationHistory
+
+    from .database import GenerationHistory, get_session
+
     with get_session() as session:
-        rows = session.exec(
-            select(GenerationHistory).order_by(GenerationHistory.created_at.desc()).limit(limit)
-        ).all()
+        rows = session.exec(select(GenerationHistory).order_by(GenerationHistory.created_at.desc()).limit(limit)).all()
     return [
-        {"id": r.id, "skill_name": r.skill_name, "input_text": r.input_text[:200],
-         "output_preview": r.output_content[:300], "created_at": r.created_at.isoformat()}
+        {
+            "id": r.id,
+            "skill_name": r.skill_name,
+            "input_text": r.input_text[:200],
+            "output_preview": r.output_content[:300],
+            "created_at": r.created_at.isoformat(),
+        }
         for r in rows
     ]
 
 
 @app.get("/api/history/generation/{record_id}")
 async def generation_detail(record_id: int):
-    from .database import get_session, GenerationHistory
+    from .database import GenerationHistory, get_session
+
     with get_session() as session:
         record = session.get(GenerationHistory, record_id)
         if not record:
@@ -1266,7 +1365,7 @@ async def generation_detail(record_id: int):
 
 @app.get("/api/export/{record_id}/pdf")
 async def export_pdf(record_id: int):
-    from .database import get_session, GenerationHistory
+    from .database import GenerationHistory, get_session
 
     with get_session() as session:
         record = session.get(GenerationHistory, record_id)
@@ -1303,7 +1402,13 @@ async def export_pdf(record_id: int):
 
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(100, 116, 139)
-    pdf.cell(0, 6, f"Skill: {record.skill_name}  |  Generated: {record.created_at.strftime('%B %d, %Y')}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(
+        0,
+        6,
+        f"Skill: {record.skill_name}  |  Generated: {record.created_at.strftime('%B %d, %Y')}",
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
     pdf.ln(6)
 
     pdf.set_text_color(30, 41, 59)
@@ -1311,9 +1416,16 @@ async def export_pdf(record_id: int):
 
     def _sanitize_for_pdf(text):
         replacements = {
-            "•": "-", "–": "-", "—": "-",
-            "‘": "'", "’": "'", "“": '"', "”": '"',
-            "…": "...", " ": " ", "‒": "-",
+            "•": "-",
+            "–": "-",
+            "—": "-",
+            "‘": "'",
+            "’": "'",
+            "“": '"',
+            "”": '"',
+            "…": "...",
+            " ": " ",
+            "‒": "-",
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
@@ -1372,11 +1484,13 @@ async def export_pdf(record_id: int):
     pdf.cell(0, 5, f"Generated by ZettaBrain  |  {record.created_at.strftime('%B %d, %Y at %I:%M %p')}", align="C")
 
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         pdf.output(tmp.name)
         tmp_path = tmp.name
 
     from fastapi.responses import FileResponse
+
     safe_name = record.skill_name.replace(" ", "_")
     return FileResponse(
         tmp_path,
@@ -1387,7 +1501,7 @@ async def export_pdf(record_id: int):
 
 @app.get("/api/export/{record_id}/docx")
 async def export_docx(record_id: int):
-    from .database import get_session, GenerationHistory
+    from .database import GenerationHistory, get_session
 
     with get_session() as session:
         record = session.get(GenerationHistory, record_id)
@@ -1396,8 +1510,8 @@ async def export_docx(record_id: int):
 
     try:
         from docx import Document
-        from docx.shared import Inches, Pt, RGBColor
         from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches, Pt, RGBColor
     except ImportError:
         raise HTTPException(status_code=500, detail="python-docx not installed. Install with: pip install python-docx")
 
@@ -1450,18 +1564,22 @@ async def export_docx(record_id: int):
 
     doc.add_paragraph("")
     footer_para = doc.add_paragraph()
-    footer_run = footer_para.add_run(f"Generated by ZettaBrain  |  {record.created_at.strftime('%B %d, %Y at %I:%M %p')}")
+    footer_run = footer_para.add_run(
+        f"Generated by ZettaBrain  |  {record.created_at.strftime('%B %d, %Y at %I:%M %p')}"
+    )
     footer_run.font.size = Pt(8)
     footer_run.font.color.rgb = RGBColor(150, 150, 150)
     footer_run.italic = True
     footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
         doc.save(tmp.name)
         tmp_path = tmp.name
 
     from fastapi.responses import FileResponse
+
     safe_name = record.skill_name.replace(" ", "_")
     return FileResponse(
         tmp_path,
@@ -1485,11 +1603,14 @@ async def corpus_summary():
                 if f.suffix == ".md":
                     try:
                         import frontmatter
+
                         fm = frontmatter.load(str(f))
-                        skills.append({
-                            "name": fm.get("name", f.stem),
-                            "description": fm.get("description", ""),
-                        })
+                        skills.append(
+                            {
+                                "name": fm.get("name", f.stem),
+                                "description": fm.get("description", ""),
+                            }
+                        )
                     except Exception:
                         pass
 
@@ -1507,6 +1628,7 @@ async def clear_vectorstore():
     _reset_vs_cache()
     try:
         import chromadb
+
         chromadb.PersistentClient(path=str(CHROMA_PATH)).delete_collection("zettabrain_docs")
     except Exception:
         if CHROMA_PATH.exists():
@@ -1522,6 +1644,7 @@ async def clear_vectorstore():
 # ── Helpers: Skills ──────────────────────────────────────────────────────────
 def _find_skill_file(skill_name: str):
     from .generation.skill_parser import SkillParser
+
     for skills_dir in [SKILLS_DIR, _BUILTIN_SKILLS_DIR]:
         if not skills_dir.exists():
             continue

@@ -12,16 +12,15 @@ import subprocess
 import time
 from pathlib import Path
 
-
 # ── Per-protocol defaults ─────────────────────────────────────────────────────
 # batch_size = files processed before the hash cache is checkpointed to disk.
 # Smaller batches on unreliable/slow protocols limit re-work after a crash.
 
 _PROFILES: dict[str, dict] = {
     "local": {"batch_size": 20},
-    "nfs":   {"batch_size": 10},
-    "smb":   {"batch_size":  5},
-    "s3":    {"batch_size":  3},
+    "nfs": {"batch_size": 10},
+    "smb": {"batch_size": 5},
+    "s3": {"batch_size": 3},
 }
 
 # If a "local" path shows higher-than-expected stat() latency, apply NFS-tier
@@ -37,7 +36,10 @@ def detect_storage_type(docs_path: str) -> str:
     try:
         result = subprocess.run(
             ["findmnt", "--noheadings", "--output", "FSTYPE", "--target", str(path)],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         fstype = result.stdout.strip().lower()
         if fstype in ("fuse.s3fs", "fuse.goofys", "fuse.mountpoint-s3", "fuse.rclone"):
@@ -56,7 +58,11 @@ def detect_storage_type(docs_path: str) -> str:
     # ── macOS / Linux fallback: parse `mount` output ─────────────────────────
     try:
         result = subprocess.run(
-            ["mount"], capture_output=True, text=True, timeout=5, check=False,
+            ["mount"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         best_match_len = 0
         best_fstype = ""

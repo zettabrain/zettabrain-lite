@@ -11,7 +11,6 @@ from .models import GenerationRequest, GenerationResult, Skill
 
 
 class GenerationEngine:
-
     def __init__(
         self,
         llm_provider: Optional[LLMProvider] = None,
@@ -38,14 +37,14 @@ class GenerationEngine:
         prompt_parts = []
 
         prompt_parts.append("You are an AI assistant that follows instructions precisely.")
-        prompt_parts.append(
-            "Your task is to generate a document based on the instructions below."
-        )
+        prompt_parts.append("Your task is to generate a document based on the instructions below.")
         prompt_parts.append("")
 
         now = datetime.now()
         prompt_parts.append(f"Today's date is {now.strftime('%B %d, %Y')}.")
-        prompt_parts.append("Use this date as the current date for any dates in the document (e.g. proposal date, quote date, effective date). Never invent or use a different date.")
+        prompt_parts.append(
+            "Use this date as the current date for any dates in the document (e.g. proposal date, quote date, effective date). Never invent or use a different date."
+        )
         prompt_parts.append("")
 
         prompt_parts.append("# TASK INSTRUCTIONS")
@@ -58,9 +57,7 @@ class GenerationEngine:
 
         if context:
             prompt_parts.append("# CONTEXT")
-            prompt_parts.append(
-                "The following context information should inform your response:"
-            )
+            prompt_parts.append("The following context information should inform your response:")
             prompt_parts.append("")
             for key, value in context.items():
                 prompt_parts.append(f"## {key}")
@@ -80,9 +77,7 @@ class GenerationEngine:
         )
 
         if skill.citation_required and corpus_context:
-            prompt_parts.append(
-                "Include citations to source documents where applicable."
-            )
+            prompt_parts.append("Include citations to source documents where applicable.")
 
         prompt_parts.append("")
         prompt_parts.append("Begin your response now:")
@@ -97,18 +92,15 @@ class GenerationEngine:
             citations: List[str] = []
 
             if skill.requires_corpus and self._corpus_retriever:
-                corpus_text, citation_objects = (
-                    self._corpus_retriever.get_context_for_generation(
-                        query=request.input,
-                        n_results=5,
-                        min_relevance=0.3,
-                    )
+                corpus_text, citation_objects = self._corpus_retriever.get_context_for_generation(
+                    query=request.input,
+                    n_results=5,
+                    min_relevance=0.3,
                 )
                 if corpus_text:
                     corpus_context = corpus_text
                     citations = [
-                        f"{c.document_title}"
-                        + (f" ({c.citation_ref})" if c.citation_ref else "")
+                        f"{c.document_title}" + (f" ({c.citation_ref})" if c.citation_ref else "")
                         for c in citation_objects
                     ]
 
@@ -117,9 +109,7 @@ class GenerationEngine:
             temperature = request.temperature if request.temperature is not None else skill.temperature
             max_tokens = request.max_tokens if request.max_tokens is not None else skill.max_tokens
 
-            content = self.llm_provider.generate(
-                prompt=prompt, temperature=temperature, max_tokens=max_tokens
-            )
+            content = self.llm_provider.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens)
 
             generation_time_ms = int((time.time() - start_time) * 1000)
 

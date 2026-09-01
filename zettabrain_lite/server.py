@@ -1267,35 +1267,46 @@ async def export_pdf(record_id: int):
 
     content = _sanitize_for_pdf(content)
 
+    lm = pdf.l_margin
+    pw = pdf.w - pdf.l_margin - pdf.r_margin
+
     for line in content.split("\n"):
         stripped = line.strip()
+        if not stripped:
+            pdf.ln(3)
+            continue
+
+        pdf.set_x(lm)
 
         if stripped.startswith("# "):
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 16)
-            pdf.multi_cell(0, 8, stripped[2:])
+            pdf.set_x(lm)
+            pdf.multi_cell(pw, 8, stripped[2:])
             pdf.ln(2)
         elif stripped.startswith("## "):
             pdf.ln(3)
             pdf.set_font("Helvetica", "B", 13)
-            pdf.multi_cell(0, 7, stripped[3:])
+            pdf.set_x(lm)
+            pdf.multi_cell(pw, 7, stripped[3:])
             pdf.ln(2)
         elif stripped.startswith("### "):
             pdf.ln(2)
             pdf.set_font("Helvetica", "B", 11)
-            pdf.multi_cell(0, 6, stripped[4:])
+            pdf.set_x(lm)
+            pdf.multi_cell(pw, 6, stripped[4:])
             pdf.ln(1)
         elif stripped.startswith("- ") or stripped.startswith("* "):
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5.5, f"   -  {stripped[2:]}")
+            indent = 8
+            pdf.set_x(lm + indent)
+            pdf.multi_cell(pw - indent, 5.5, "- " + stripped[2:])
         elif stripped.startswith("**") and stripped.endswith("**"):
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(0, 5.5, stripped.strip("*"))
-        elif stripped == "":
-            pdf.ln(3)
+            pdf.multi_cell(pw, 5.5, stripped.strip("*"))
         else:
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5.5, stripped)
+            pdf.multi_cell(pw, 5.5, stripped)
 
     pdf.ln(10)
     pdf.set_draw_color(200, 200, 200)

@@ -1,17 +1,17 @@
 """
-ZettaBrain Trial Proxy — Rate-limited gateway for first-run experience.
+ZettaBrain Trial Proxy — Rate-limited gateway via Vertex AI.
 
-Deploy this on Railway/Fly.io/Render. It holds the real Gemini API key
-server-side and rate-limits each ZettaBrain installation to N requests.
+Uses Google Cloud Vertex AI for Gemini inference, which bills to the
+project's Cloud credits (not the AI Studio prepayment system).
+Auto-discovers available models by trying the preference list.
 
-The proxy auto-discovers available Gemini models on startup so it never
-breaks when Google deprecates a model.
+On Cloud Run, authentication is automatic via the service account.
 
 Environment variables:
-  GEMINI_API_KEY  — Your Google Gemini API key
-  MAX_REQUESTS    — Max requests per install (default: 25)
-  REDIS_URL       — Optional Redis URL for persistent rate limiting
-                    (falls back to in-memory dict if not set)
+  GOOGLE_CLOUD_PROJECT — GCP project ID (auto-set on Cloud Run)
+  VERTEX_LOCATION      — Region (default: us-central1)
+  MAX_REQUESTS         — Max requests per install (default: 25)
+  REDIS_URL            — Optional Redis for persistent rate limiting
 """
 
 import json
@@ -21,17 +21,23 @@ import time
 from collections import defaultdict
 from typing import Optional
 
+import google.auth
+import google.auth.transport.requests
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 log = logging.getLogger("trial-proxy")
+logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="ZettaBrain Trial Proxy", version="1.1.0")
+app = FastAPI(title="ZettaBrain Trial Proxy", version="2.0.0")
 
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "zettabrain")
+LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
+VERTEX_CHAT_URL = (
+    f"https://{LOCATION}-aiplatform.googleapis.com/v1beta1"
+    f"/projects/{PROJECT_ID}/locations/{LOCATION}/endpoints/openapi/chat/completions"
+)
 MAX_REQUESTS = int(os.environ.get("MAX_REQUESTS", "25"))
 
 MODEL_PREFERENCE = [
@@ -40,10 +46,9 @@ MODEL_PREFERENCE = [
     "gemini-3.5-flash",
     "gemini-3.6-flash",
     "gemini-3.7-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
 ]
 
+_credentials = None
 _resolved_model: Optional[str] = None
 _model_resolved_at: float = 0
 MODEL_CACHE_TTL = 3600
@@ -51,59 +56,47 @@ MODEL_CACHE_TTL = 3600
 _usage: dict = defaultdict(lambda: {"count": 0, "first_seen": 0})
 
 
-async def _discover_model() -> str:
-    """Query Gemini API for available models and pick the best flash model."""
+def _get_auth_headers() -> dict:
+    global _credentials
+    if _credentials is None:
+        _credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    auth_req = google.auth.transport.requests.Request()
+    _credentials.refresh(auth_req)
+    return {
+        "Authorization": f"Bearer {_credentials.token}",
+        "Content-Type": "application/json",
+    }
+
+
+async def _call_vertex(body: dict) -> httpx.Response:
+    """Call Vertex AI, trying models from preference list on failure."""
     global _resolved_model, _model_resolved_at
 
+    headers = _get_auth_headers()
+
     if _resolved_model and (time.time() - _model_resolved_at) < MODEL_CACHE_TTL:
-        return _resolved_model
+        body["model"] = _resolved_model
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(VERTEX_CHAT_URL, headers=headers, json=body)
+            if resp.status_code == 200:
+                return resp
+            log.warning(f"Cached model {_resolved_model} failed ({resp.status_code}), re-discovering")
+            _resolved_model = None
 
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                GEMINI_MODELS_URL,
-                params={"key": GEMINI_API_KEY},
-            )
-            resp.raise_for_status()
-            models_data = resp.json()
-
-        available = set()
-        for m in models_data.get("models", []):
-            name = m.get("name", "")
-            if name.startswith("models/"):
-                name = name[len("models/"):]
-            available.add(name)
-
-        for preferred in MODEL_PREFERENCE:
-            if preferred in available:
-                _resolved_model = preferred
+    async with httpx.AsyncClient(timeout=120) as client:
+        for model in MODEL_PREFERENCE:
+            body["model"] = model
+            resp = await client.post(VERTEX_CHAT_URL, headers=headers, json=body)
+            if resp.status_code == 200:
+                _resolved_model = model
                 _model_resolved_at = time.time()
-                log.info(f"Resolved trial model: {preferred}")
-                return preferred
+                log.info(f"Resolved trial model: {model}")
+                return resp
+            log.info(f"Model {model} returned {resp.status_code}, trying next")
 
-        flash_models = sorted(
-            [n for n in available if "flash" in n.lower()],
-            reverse=True,
-        )
-        if flash_models:
-            _resolved_model = flash_models[0]
-            _model_resolved_at = time.time()
-            log.info(f"Resolved trial model (fallback): {flash_models[0]}")
-            return flash_models[0]
-
-        if available:
-            pick = sorted(available)[-1]
-            _resolved_model = pick
-            _model_resolved_at = time.time()
-            log.info(f"Resolved trial model (last resort): {pick}")
-            return pick
-
-    except Exception as e:
-        log.warning(f"Model discovery failed: {e}")
-        if _resolved_model:
-            return _resolved_model
-
-    return "gemini-3.5-flash-lite"
+    return resp
 
 
 def _get_usage(install_id: str) -> dict:
@@ -145,13 +138,12 @@ def _incr_usage(install_id: str):
 @app.get("/health")
 async def health():
     model = _resolved_model or "not yet resolved"
-    return {"status": "ok", "model": model}
+    return {"status": "ok", "model": model, "backend": "vertex-ai"}
 
 
 @app.get("/v1/model")
 async def get_model():
-    """Returns the currently resolved model — called by the client on startup."""
-    model = await _discover_model()
+    model = _resolved_model or MODEL_PREFERENCE[0]
     return {"model": model}
 
 
@@ -175,36 +167,26 @@ async def proxy_chat(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    model = await _discover_model()
-    body["model"] = model
     if body.get("max_tokens", 0) > 2048:
         body["max_tokens"] = 2048
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                GEMINI_URL,
-                headers={
-                    "Authorization": f"Bearer {GEMINI_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
+        response = await _call_vertex(body)
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Upstream error: {response.text[:300]}"
             )
 
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Upstream error: {response.text[:200]}"
-                )
-
-            _incr_usage(install_id)
-            result = response.json()
-            result["_trial"] = {
-                "requests_used": usage["count"] + 1,
-                "requests_remaining": MAX_REQUESTS - usage["count"] - 1,
-                "model": model,
-            }
-            return JSONResponse(content=result)
+        _incr_usage(install_id)
+        result = response.json()
+        result["_trial"] = {
+            "requests_used": usage["count"] + 1,
+            "requests_remaining": MAX_REQUESTS - usage["count"] - 1,
+            "model": _resolved_model,
+        }
+        return JSONResponse(content=result)
 
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Upstream timeout")

@@ -1,9 +1,15 @@
-"""Skill quality gate — validate SKILL.md content and score it."""
+"""Skill quality gate and corpus rule extraction."""
 
+import hashlib
+import json
+import logging
 import re
 from dataclasses import dataclass, field
+from typing import Any, Callable
 
 import frontmatter
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -272,3 +278,151 @@ def validate_skill(content: str) -> QualityReport:
         warnings=warnings,
         stats=stats,
     )
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: corpus rule extraction
+# ---------------------------------------------------------------------------
+
+_PROBE_QUERIES = [
+    "pricing thresholds rates fees costs discounts",
+    "prohibitions restrictions must not never forbidden",
+    "requirements mandatory required must shall",
+    "compliance limitations certifications regulations",
+    "terms validity expiration conditions approval authority",
+    "escalation approvals sign-off authorization limits",
+]
+
+_VALID_CATEGORIES = frozenset({"threshold", "approval", "prohibition", "required", "exclusion", "disclaimer"})
+
+_EXTRACTION_PROMPT = """You are extracting business rules from internal documents.
+
+CONTEXT (from the organization's document library):
+{context}
+
+TASK: Extract every concrete, organization-specific rule from the context above.
+
+Each rule must be a JSON object with these fields:
+- "rule": the rule statement — quote figures, percentages, dollar amounts, and names exactly as they appear
+- "category": one of: threshold, approval, prohibition, required, exclusion, disclaimer
+- "source": the document or section the rule came from (use the Source header if available)
+- "confidence": a float from 0.0 to 1.0 — how clearly the document states this as an enforceable rule
+
+INSTRUCTIONS:
+- Quote figures exactly. "$5,000" stays "$5,000", not "a few thousand dollars".
+- Never generalize a specific number into a vague statement. "10 business days" does not become "a reasonable period".
+- Exclude anything a competent professional in this field would already know. General knowledge is not a rule.
+- If a passage is ambiguous, lower the confidence rather than inventing a clear rule.
+- If the documents contain no extractable rules, return an empty array. Never invent rules.
+- De-duplicate: if the same rule appears in multiple sources, keep the most specific version.
+
+Return ONLY a JSON array. No commentary, no markdown fences, no explanation.
+Example: [{{"rule": "Discounts above 5% require VP Sales approval", "category": "approval", "source": "rate-card", "confidence": 0.95}}]
+"""
+
+
+def _dedup_chunks(chunks: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for chunk in chunks:
+        h = hashlib.md5(chunk.encode()).hexdigest()
+        if h not in seen:
+            seen.add(h)
+            result.append(chunk)
+    return result
+
+
+def _parse_rules_json(raw: str) -> list[dict]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1:
+        return []
+    text = text[start : end + 1]
+
+    arr = json.loads(text)
+    if not isinstance(arr, list):
+        return []
+    return arr
+
+
+def _validate_rule(r: Any) -> dict | None:
+    if not isinstance(r, dict):
+        return None
+    rule_text = r.get("rule", "")
+    if not rule_text or not isinstance(rule_text, str):
+        return None
+    category = r.get("category", "")
+    if category not in _VALID_CATEGORIES:
+        category = "required"
+    source = str(r.get("source", "unknown"))
+    try:
+        confidence = float(r.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+    return {
+        "rule": rule_text.strip(),
+        "category": category,
+        "source": source.strip(),
+        "confidence": round(confidence, 2),
+    }
+
+
+def _dedup_rules(rules: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    result: list[dict] = []
+    for r in rules:
+        key = r["rule"].lower().strip()
+        if key not in seen:
+            seen.add(key)
+            result.append(r)
+    return result
+
+
+def extract_rules(llm_fn: Callable[[str], str], retriever: Any, max_rules: int = 25) -> list[dict]:
+    all_chunks: list[str] = []
+    for query in _PROBE_QUERIES:
+        try:
+            context, _citations = retriever.get_context_for_generation(query, n_results=5)
+            if context:
+                all_chunks.append(context)
+        except Exception:
+            log.debug("Retriever query failed for %r", query, exc_info=True)
+            continue
+
+    if not all_chunks:
+        return []
+
+    unique = _dedup_chunks(all_chunks)
+    combined = "\n\n---\n\n".join(unique)
+    if len(combined) > 14_000:
+        combined = combined[:14_000]
+
+    prompt = _EXTRACTION_PROMPT.format(context=combined)
+
+    try:
+        raw = llm_fn(prompt)
+    except Exception:
+        log.debug("LLM call failed during rule extraction", exc_info=True)
+        return []
+
+    try:
+        parsed = _parse_rules_json(raw)
+    except (json.JSONDecodeError, ValueError):
+        log.debug("Failed to parse rules JSON: %s", raw[:200] if raw else "(empty)")
+        return []
+
+    validated = []
+    for r in parsed:
+        v = _validate_rule(r)
+        if v:
+            validated.append(v)
+
+    deduped = _dedup_rules(validated)
+    deduped.sort(key=lambda r: r["confidence"], reverse=True)
+    return deduped[:max_rules]

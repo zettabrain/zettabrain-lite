@@ -1725,6 +1725,80 @@ async def corpus_summary():
     }
 
 
+# ── Routes: Document Picker (for wizard example) ───────────────────────────
+@app.get("/api/documents")
+async def list_documents():
+    """Return list of ingested documents with metadata for the wizard document picker."""
+    if not INGEST_LOG.exists():
+        return {"documents": []}
+    try:
+        data = json.loads(INGEST_LOG.read_text(encoding="utf-8"))
+    except Exception:
+        return {"documents": []}
+
+    documents = []
+    for filepath, file_hash in data.items():
+        p = Path(filepath)
+        name = p.name
+        ext = p.suffix.lstrip(".").lower()
+        size_kb = 0
+        if p.exists():
+            size_kb = round(p.stat().st_size / 1024)
+        documents.append({"path": filepath, "name": name, "ext": ext, "size_kb": size_kb})
+    documents.sort(key=lambda d: d["name"].lower())
+    return {"documents": documents}
+
+
+@app.get("/api/documents/content")
+async def get_document_content(path: str):
+    """Read a document's text content for use as a skill example. Supports txt, md, docx, pdf."""
+    if not INGEST_LOG.exists():
+        raise HTTPException(status_code=404, detail="No ingested documents found")
+
+    try:
+        data = json.loads(INGEST_LOG.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read document index")
+
+    if path not in data:
+        raise HTTPException(status_code=404, detail="Document not found in ingested files")
+
+    p = Path(path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Document file no longer exists on disk")
+
+    ext = p.suffix.lower()
+    try:
+        if ext in (".txt", ".md"):
+            content = p.read_text(encoding="utf-8", errors="replace")
+        elif ext == ".docx":
+            try:
+                from docx import Document
+            except ImportError:
+                raise HTTPException(status_code=500, detail="python-docx is required to read .docx files")
+            doc = Document(str(p))
+            content = "\n".join(para.text for para in doc.paragraphs if para.text.strip())
+        elif ext == ".pdf":
+            try:
+                from pypdf import PdfReader
+            except ImportError:
+                raise HTTPException(status_code=500, detail="pypdf is required to read .pdf files")
+            reader = PdfReader(str(p))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            content = "\n\n".join(pages)
+        else:
+            content = p.read_text(encoding="utf-8", errors="replace")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read document content")
+
+    if len(content) > 8000:
+        content = content[:8000] + "\n\n[... truncated for preview ...]"
+
+    return {"path": path, "name": p.name, "content": content}
+
+
 # ── Routes: Clear Vectorstore ────────────────────────────────────────────────
 @app.delete("/api/vectorstore")
 async def clear_vectorstore():

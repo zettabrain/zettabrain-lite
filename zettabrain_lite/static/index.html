@@ -249,6 +249,28 @@
   .tone-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
   .preview-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 16px; font-family: 'Courier New', monospace; font-size: 12px; color: var(--text2); white-space: pre-wrap; max-height: 400px; overflow-y: auto; line-height: 1.6; }
   .wizard-modal { max-width: 720px; max-height: 90vh; }
+  .example-source-tabs { display: flex; gap: 0; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .example-source-tab { padding: 6px 14px; font-size: 12px; font-weight: 500; color: var(--text3); border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .example-source-tab:hover { color: var(--text2); }
+  .example-source-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .example-source-panel { display: none; }
+  .example-source-panel.active { display: block; }
+  .doc-picker-list { max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .doc-picker-search { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px 6px 0 0; background: var(--bg3); color: var(--text); font-size: 12px; outline: none; border-bottom: none; }
+  .doc-picker-search:focus { border-color: var(--accent); }
+  .doc-picker-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; transition: background 0.1s; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .doc-picker-item:last-child { border-bottom: none; }
+  .doc-picker-item:hover { background: var(--bg3); }
+  .doc-picker-item.selected { background: rgba(59,130,246,0.1); border-left: 3px solid var(--accent); }
+  .doc-picker-item .doc-ext { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 600; text-transform: uppercase; background: var(--bg3); color: var(--text3); min-width: 28px; text-align: center; }
+  .doc-picker-item .doc-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-picker-item .doc-size { color: var(--text3); font-size: 11px; }
+  .doc-picker-empty { padding: 20px; text-align: center; color: var(--text3); font-size: 12px; }
+  .example-upload-zone { border: 1px dashed var(--border); border-radius: 6px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.15s; }
+  .example-upload-zone:hover { border-color: var(--accent); background: rgba(59,130,246,0.04); }
+  .example-upload-zone .upload-icon { font-size: 24px; margin-bottom: 6px; }
+  .example-upload-zone p { font-size: 12px; color: var(--text3); margin: 0; }
+  .example-upload-zone .filename { color: var(--green); font-weight: 500; margin-top: 4px; }
   .wiz-quality-banner { padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-bottom: 12px; display: none; }
   .wiz-quality-banner.pass { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.3); color: var(--green); }
   .wiz-quality-banner.warn { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3); color: #d97706; }
@@ -258,7 +280,7 @@
   .skill-source-badge.builtin { background: rgba(99,102,241,0.15); color: var(--accent2); }
   .skill-source-badge.user { background: rgba(34,197,94,0.15); color: var(--green); }
   .skill-actions { display: flex; gap: 6px; flex-shrink: 0; }
-  .template-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+  .template-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; max-height: 260px; overflow-y: auto; }
   .template-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; transition: all 0.15s; }
   .template-card:hover { border-color: var(--accent); }
   .template-card.selected { border-color: var(--accent); background: rgba(59,130,246,0.08); }
@@ -863,8 +885,18 @@ Instructions for the AI..."></textarea>
         <div class="template-grid" id="wiz-templates">
           <div class="template-card" onclick="selectTemplate(this, 'proposal')">
             <div class="template-icon">&#128196;</div>
-            <h4>Proposal / Quote</h4>
-            <p>Client proposals, quotes, bids, SOWs</p>
+            <h4>Proposal</h4>
+            <p>Client proposals, bids, pitches, SOWs</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'quote')">
+            <div class="template-icon">&#128178;</div>
+            <h4>Quote</h4>
+            <p>Pricing quotes, estimates, rate breakdowns</p>
+          </div>
+          <div class="template-card" onclick="selectTemplate(this, 'contract')">
+            <div class="template-icon">&#128221;</div>
+            <h4>Contract</h4>
+            <p>Agreements, terms, scope, obligations</p>
           </div>
           <div class="template-card" onclick="selectTemplate(this, 'report')">
             <div class="template-icon">&#128202;</div>
@@ -934,8 +966,29 @@ Instructions for the AI..."></textarea>
           Include source citations in the output
         </label>
         <div class="form-group" style="margin-top:14px;">
-          <label>Paste an example document <span style="font-weight:400; color:var(--text3); font-size:11px;">(optional, but one real example is worth more than any other input)</span></label>
-          <textarea class="input-field" id="wiz-example" rows="4" placeholder="Paste a real past document here — a proposal you liked, a report that hit the right tone, a template you follow. The AI will match its structure and conventions."></textarea>
+          <label>Example document <span style="font-weight:400; color:var(--text3); font-size:11px;">(optional, but one real example is worth more than any other input)</span></label>
+          <div class="example-source-tabs">
+            <button class="example-source-tab active" onclick="switchExampleTab('picker')">From Library</button>
+            <button class="example-source-tab" onclick="switchExampleTab('upload')">Upload File</button>
+            <button class="example-source-tab" onclick="switchExampleTab('paste')">Paste Text</button>
+          </div>
+          <div class="example-source-panel active" id="example-panel-picker">
+            <input class="doc-picker-search" id="doc-picker-search" type="text" placeholder="Search ingested documents..." oninput="filterDocPicker()">
+            <div class="doc-picker-list" id="doc-picker-list">
+              <div class="doc-picker-empty">Loading documents...</div>
+            </div>
+          </div>
+          <div class="example-source-panel" id="example-panel-upload">
+            <div class="example-upload-zone" id="example-upload-zone" onclick="document.getElementById('example-file-input').click()">
+              <div class="upload-icon">&#128206;</div>
+              <p>Click to select a file (.pdf, .docx, .txt, .md)</p>
+              <div class="filename" id="example-upload-filename"></div>
+            </div>
+            <input type="file" id="example-file-input" accept=".pdf,.docx,.txt,.md,.doc" style="display:none;" onchange="handleExampleFileUpload(event)">
+          </div>
+          <div class="example-source-panel" id="example-panel-paste">
+            <textarea class="input-field" id="wiz-example" rows="4" placeholder="Paste a real past document here — a proposal you liked, a report that hit the right tone, a template you follow. The AI will match its structure and conventions."></textarea>
+          </div>
         </div>
       </div>
 
@@ -2137,9 +2190,21 @@ document.getElementById('skill-view-modal').addEventListener('click', e => {
 const SKILL_TEMPLATES = {
   proposal: {
     name: 'Client Proposal',
-    desc: 'Generate a professional client proposal with pricing, timeline, team, and terms based on our company documents.',
-    sections: ['Executive Summary', 'Understanding of Requirements', 'Proposed Approach', 'Timeline & Milestones', 'Team', 'Investment', 'Terms & Conditions'],
+    desc: 'Generate a professional client proposal that persuades the reader with our approach, team, timeline, and past work — without pricing details.',
+    sections: ['Executive Summary', 'Understanding of Requirements', 'Proposed Approach', 'Timeline & Milestones', 'Team & Credentials', 'Why Us', 'Next Steps'],
     corpus: true, citations: true, tones: ['Professional', 'Persuasive'],
+  },
+  quote: {
+    name: 'Quote',
+    desc: 'Generate a pricing quote with line-item breakdown, rates, totals, validity period, and payment terms based on our rate cards and pricing documents.',
+    sections: ['Quote Summary', 'Line Items & Pricing', 'Subtotals by Phase', 'Discounts & Adjustments', 'Total Investment', 'Payment Terms', 'Validity & Conditions'],
+    corpus: true, citations: true, tones: ['Professional', 'Concise'],
+  },
+  contract: {
+    name: 'Contract',
+    desc: 'Generate a contract or agreement covering scope, deliverables, obligations, liability, payment, termination, and signatures based on our standard terms.',
+    sections: ['Parties', 'Scope of Work', 'Deliverables & Acceptance', 'Timeline', 'Fees & Payment', 'Intellectual Property', 'Confidentiality', 'Liability & Indemnification', 'Termination', 'General Provisions', 'Signatures'],
+    corpus: true, citations: true, tones: ['Formal', 'Concise'],
   },
   report: {
     name: 'Status Report',
@@ -2182,14 +2247,29 @@ function selectTemplate(el, key) {
   if (key !== 'custom') {
     document.getElementById('wiz-name').value = tmpl.name;
     document.getElementById('wiz-desc').value = tmpl.desc;
+    document.getElementById('wiz-corpus').checked = !!tmpl.corpus;
+    document.getElementById('wiz-citations').checked = !!tmpl.citations;
+    document.querySelectorAll('.tone-chip').forEach(c => c.classList.remove('selected'));
+    (tmpl.tones || ['Professional']).forEach(tone => {
+      document.querySelectorAll('.tone-chip').forEach(c => {
+        if (c.textContent.trim() === tone) c.classList.add('selected');
+      });
+    });
+    wizSelectedTones = tmpl.tones || ['Professional'];
   }
 }
+
+let wizDocuments = [];
+let wizSelectedDoc = null;
+let wizUploadedFileContent = '';
 
 function openSkillWizard() {
   wizStep = 1;
   wizSelectedTones = ['Professional'];
   wizSelectedTemplate = '';
   wizDraftQuality = null;
+  wizSelectedDoc = null;
+  wizUploadedFileContent = '';
 
   document.getElementById('wiz-name').value = '';
   document.getElementById('wiz-desc').value = '';
@@ -2198,6 +2278,7 @@ function openSkillWizard() {
   document.getElementById('wiz-citations').checked = false;
   document.getElementById('wiz-example').value = '';
   document.getElementById('wiz-preview').value = '';
+  document.getElementById('example-upload-filename').textContent = '';
 
   document.querySelectorAll('.tone-chip').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
@@ -2208,6 +2289,8 @@ function openSkillWizard() {
   banner.style.display = 'none';
   banner.className = 'wiz-quality-banner';
 
+  switchExampleTab('picker');
+  loadDocPickerList();
   updateWizSteps();
   document.getElementById('wizard-modal').classList.add('open');
 }
@@ -2277,7 +2360,6 @@ async function wizNext() {
     const corpus = document.getElementById('wiz-corpus').checked;
     const maxTokens = document.getElementById('wiz-maxlen').value;
     const citations = document.getElementById('wiz-citations').checked;
-    const example = document.getElementById('wiz-example').value.trim();
     const tones = wizSelectedTones.length > 0 ? wizSelectedTones : ['Professional'];
     const tmpl = SKILL_TEMPLATES[wizSelectedTemplate] || SKILL_TEMPLATES.custom;
     const sections = tmpl.sections.length > 0 ? tmpl.sections : [];
@@ -2285,6 +2367,8 @@ async function wizNext() {
     btn.disabled = true;
     btn.textContent = 'Generating skill...';
     document.getElementById('wiz-prev').disabled = true;
+
+    let example = await getWizardExampleContent();
 
     try {
       const r = await fetch('/api/skills/draft', {
@@ -2382,7 +2466,118 @@ const SECTION_GUIDANCE = {
   'action items': 'A table: Action, Owner, Due Date, Status. Every action must have a named owner and a specific date.',
   'details': 'Present the core content organized by topic. Use subheadings if the section exceeds one page. Include specific data, figures, or references rather than general statements.',
   'conclusion': 'Restate the key recommendation or finding. List the one to three most important next steps. Do not introduce new information here.',
+  'quote summary': 'State the client name, project name, quote date, validity period, and the total quoted amount upfront. One paragraph maximum.',
+  'line items & pricing': 'A table with: Item/Service, Unit, Quantity, Unit Rate, Line Total. Every rate must come from the rate card or corpus. Do not invent rates.',
+  'subtotals by phase': 'Group line items by project phase or workstream. Show subtotal per phase. Use a table format.',
+  'discounts & adjustments': 'List any volume discounts, early-payment discounts, or adjustments. Show the discount percentage and the dollar impact. If no discounts apply, state "No discounts applied."',
+  'total investment': 'Show the grand total with and without tax. If tax treatment is unknown, state the assumption. Bold the final number.',
+  'payment terms': 'State the payment schedule (e.g., 50% upfront, 50% on delivery), accepted methods, currency, and late-payment terms. Pull from standard terms if available.',
+  'validity & conditions': 'State how long this quote is valid, any conditions that would change the pricing, and what happens after expiry.',
+  'why us': 'Highlight differentiators — past results, certifications, team depth, unique methodology. Reference specific case studies or metrics from the corpus if available.',
+  'parties': 'Full legal names, addresses, and registration numbers of all parties. Use [NEEDS INPUT] for any missing party details.',
+  'scope of work': 'Define exactly what will be delivered, the standards it must meet, and any assumptions. Be specific enough that both parties can agree whether the scope was fulfilled.',
+  'deliverables & acceptance': 'List each deliverable with acceptance criteria and the review period. State what happens if acceptance is not given within the review period.',
+  'fees & payment': 'Total contract value, payment milestones tied to deliverables, invoicing procedures, and late-payment interest rate.',
+  'intellectual property': 'State who owns the work product, any licenses granted, and when ownership transfers. Reference standard IP terms from the corpus.',
+  'confidentiality': 'Define what constitutes confidential information, the obligations of each party, the duration of confidentiality, and permitted disclosures.',
+  'liability & indemnification': 'Cap on liability, exclusions, indemnification obligations of each party. Pull from standard terms. Never invent liability caps.',
+  'termination': 'Conditions for termination by either party, notice period, obligations on termination (payment for work done, return of materials).',
+  'general provisions': 'Governing law, dispute resolution, force majeure, amendment process, severability, entire agreement clause.',
+  'signatures': 'Signature blocks for each party with name, title, date, and signature line. Use [NEEDS INPUT] for names not provided.',
+  'team & credentials': 'Name the lead and key team members. For each, include their role on this project, relevant experience, and one or two specific accomplishments. Reference case studies from the corpus.',
 };
+
+// ── Example Source: tabs, picker, upload ──────────────
+function switchExampleTab(tab) {
+  document.querySelectorAll('.example-source-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.example-source-panel').forEach(p => p.classList.remove('active'));
+  const tabEl = document.querySelector(`.example-source-tab[onclick*="'${tab}'"]`);
+  if (tabEl) tabEl.classList.add('active');
+  const panel = document.getElementById('example-panel-' + tab);
+  if (panel) panel.classList.add('active');
+}
+
+async function loadDocPickerList() {
+  const list = document.getElementById('doc-picker-list');
+  try {
+    const r = await fetch('/api/documents');
+    const data = await r.json();
+    wizDocuments = data.documents || [];
+  } catch (e) {
+    wizDocuments = [];
+  }
+  renderDocPickerList(wizDocuments);
+}
+
+function renderDocPickerList(docs) {
+  const list = document.getElementById('doc-picker-list');
+  if (docs.length === 0) {
+    list.innerHTML = '<div class="doc-picker-empty">No ingested documents found. Ingest files first, or use Upload or Paste instead.</div>';
+    return;
+  }
+  list.innerHTML = docs.map((d, i) => `
+    <div class="doc-picker-item${wizSelectedDoc && wizSelectedDoc.path === d.path ? ' selected' : ''}" onclick="selectDocForExample(${i})">
+      <span class="doc-ext">${d.ext}</span>
+      <span class="doc-name" title="${d.name}">${d.name}</span>
+      <span class="doc-size">${d.size_kb > 0 ? d.size_kb + ' KB' : ''}</span>
+    </div>
+  `).join('');
+}
+
+function filterDocPicker() {
+  const q = document.getElementById('doc-picker-search').value.toLowerCase();
+  const filtered = q ? wizDocuments.filter(d => d.name.toLowerCase().includes(q)) : wizDocuments;
+  renderDocPickerList(filtered);
+}
+
+function selectDocForExample(idx) {
+  const q = document.getElementById('doc-picker-search').value.toLowerCase();
+  const filtered = q ? wizDocuments.filter(d => d.name.toLowerCase().includes(q)) : wizDocuments;
+  const doc = filtered[idx];
+  if (!doc) return;
+
+  if (wizSelectedDoc && wizSelectedDoc.path === doc.path) {
+    wizSelectedDoc = null;
+  } else {
+    wizSelectedDoc = doc;
+  }
+  renderDocPickerList(filtered);
+}
+
+function handleExampleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const nameEl = document.getElementById('example-upload-filename');
+  nameEl.textContent = file.name;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    wizUploadedFileContent = e.target.result;
+  };
+  reader.readAsText(file);
+}
+
+async function getWizardExampleContent() {
+  const activeTab = document.querySelector('.example-source-tab.active');
+  const tab = activeTab ? activeTab.textContent.trim() : 'Paste Text';
+
+  if (tab === 'From Library' && wizSelectedDoc) {
+    try {
+      const r = await fetch('/api/documents/content?path=' + encodeURIComponent(wizSelectedDoc.path));
+      if (r.ok) {
+        const data = await r.json();
+        return data.content || '';
+      }
+    } catch (e) { /* fall through */ }
+    return '';
+  }
+
+  if (tab === 'Upload File' && wizUploadedFileContent) {
+    return wizUploadedFileContent;
+  }
+
+  return document.getElementById('wiz-example').value.trim();
+}
 
 function buildSkillMarkdown() {
   const name = document.getElementById('wiz-name').value.trim();

@@ -426,3 +426,175 @@ def extract_rules(llm_fn: Callable[[str], str], retriever: Any, max_rules: int =
     deduped = _dedup_rules(validated)
     deduped.sort(key=lambda r: r["confidence"], reverse=True)
     return deduped[:max_rules]
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: skill draft generation
+# ---------------------------------------------------------------------------
+
+_GENERATOR_PROMPT = """You are writing a SKILL.md file — a structured instruction document that tells an AI model \
+how to generate a specific type of output for an organization.
+
+GOAL: {goal}
+
+{rules_block}
+{example_block}
+{sections_block}
+
+SKILL NAME (kebab-case slug for frontmatter): {name_slug}
+DISPLAY TITLE: {display_name}
+DESCRIPTION: {description}
+TONE: {tone}
+REQUIRES CORPUS: {requires_corpus}
+CITATIONS: {citations}
+MAX TOKENS: {max_tokens}
+
+Write the complete SKILL.md file with YAML frontmatter and markdown body.
+
+REQUIRED STRUCTURE — include ALL of these sections:
+- ## Retrieval Order (how to query the corpus, numbered steps)
+- ## Rules (specific, enforceable rules — every extracted rule below MUST appear here verbatim)
+- ## Boundaries (what the model must never do)
+- ## Output Structure (subsections with specific instructions for each)
+- ## Self-Check (a checklist the model runs before returning output)
+- ## Style (tone and formatting directives, 4 bullets max)
+
+FRONTMATTER must include: name, version, description, requires_corpus, temperature, max_tokens
+
+THE SINGLE MOST IMPORTANT RULE — never write an instruction that restates the thing it is instructing:
+
+  FORBIDDEN: "Write the executive summary section based on the user's input."
+  REQUIRED:  "Open with the client's problem in their own numbers and their deadline, not with who we are. \
+State the proposed approach in three sentences and give the total figure here rather than deferring it to \
+the pricing table. One page maximum."
+
+The forbidden example changes nothing about the output. The required example changes everything. \
+Every instruction you write must pass this test: would the output differ if this line were deleted? \
+If not, the line must not exist.
+
+ADDITIONAL RULES FOR GENERATION:
+- Do NOT invent thresholds, dollar amounts, percentages, role titles, or approval chains. \
+If a rule was not provided in the extracted rules below, do not fabricate one.
+- If information is missing that the skill needs, add a ## Gaps section listing the open questions. \
+Never guess.
+- Include at least one prohibition in Boundaries using "never", "must not", or "do not".
+- If requires_corpus is true, include an abstention rule: what to do when retrieval returns nothing.
+- The description must be at least 120 characters and include trigger phrasing ("Use this when...", \
+"Generate a...").
+- The file must be at least 60 lines.
+- Style section: do NOT combine contradictory directives (e.g., "formal" and "friendly").
+
+Return ONLY the complete SKILL.md content. No commentary before or after.
+"""
+
+_REPAIR_PROMPT = """The SKILL.md you generated has quality issues that must be fixed.
+
+ERRORS:
+{errors}
+
+WARNINGS:
+{warnings}
+
+ORIGINAL SKILL:
+{content}
+
+Fix every error listed above. Pay special attention to:
+- Replace any hollow instructions ("Write the X section...") with specific, actionable directives
+- Add missing sections (Retrieval Order, Rules, Boundaries, Output Structure, Self-Check)
+- Add prohibitions using "never", "must not", or "do not"
+- Ensure the description is at least 120 characters with trigger phrasing
+- Ensure the file is at least 60 lines
+- Add an abstention rule if requires_corpus is true
+
+Return ONLY the corrected SKILL.md content. No commentary before or after.
+"""
+
+
+def _build_rules_block(rules: list[dict]) -> str:
+    if not rules:
+        return "EXTRACTED RULES: None found in corpus. Do not invent any."
+    lines = ["EXTRACTED RULES (from the organization's documents — include ALL of these verbatim in ## Rules):"]
+    for r in rules:
+        lines.append(f"- [{r['category'].upper()}] {r['rule']} (source: {r['source']}, confidence: {r['confidence']})")
+    return "\n".join(lines)
+
+
+def _build_example_block(example: str) -> str:
+    if not example:
+        return ""
+    trimmed = example[:4000]
+    return f"EXAMPLE OUTPUT (match this document's structure, section lengths, and conventions):\n{trimmed}"
+
+
+def _build_sections_block(sections: list[str]) -> str:
+    if not sections:
+        return ""
+    return "REQUESTED SECTIONS: " + ", ".join(sections)
+
+
+def _to_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower().strip())
+    return slug.strip("-")
+
+
+def generate_skill_draft(
+    llm_fn: Callable[[str], str],
+    goal: str,
+    name: str = "",
+    sections: list[str] | None = None,
+    tone: list[str] | None = None,
+    requires_corpus: bool = False,
+    citations: bool = False,
+    max_tokens: int = 2000,
+    example_output: str = "",
+    rules: list[dict] | None = None,
+) -> dict:
+    display_name = name or "Untitled Skill"
+    name_slug = _to_slug(display_name)
+    tone_list = tone or ["Professional"]
+    sections = sections or []
+
+    description = goal
+    if len(description) < 120:
+        description = f"{goal}. Use this when you need to generate this type of document."
+    if len(description) < 120:
+        description += " Retrieve relevant corpus documents and apply organizational rules."
+
+    prompt = _GENERATOR_PROMPT.format(
+        goal=goal,
+        rules_block=_build_rules_block(rules or []),
+        example_block=_build_example_block(example_output),
+        sections_block=_build_sections_block(sections),
+        name_slug=name_slug,
+        display_name=display_name,
+        description=description,
+        tone=", ".join(tone_list),
+        requires_corpus=requires_corpus,
+        citations=citations,
+        max_tokens=max_tokens,
+    )
+
+    content = llm_fn(prompt)
+    if not content or len(content.strip()) < 50:
+        raise ValueError("The model returned an empty or unusable response. Try again or use a different model.")
+
+    quality = validate_skill(content)
+
+    if not quality.passed:
+        repair = _REPAIR_PROMPT.format(
+            errors="\n".join(f"- {e}" for e in quality.errors),
+            warnings="\n".join(f"- {w}" for w in quality.warnings),
+            content=content,
+        )
+        try:
+            content = llm_fn(repair)
+            quality = validate_skill(content)
+        except Exception:
+            log.debug("Repair attempt failed", exc_info=True)
+
+    return {
+        "content": content,
+        "quality": quality.as_dict(),
+        "rules": rules or [],
+        "rules_found": len(rules) if rules else 0,
+    }

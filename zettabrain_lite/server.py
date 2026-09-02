@@ -393,6 +393,18 @@ class SkillUploadBody(BaseModel):
     filename: str
 
 
+class SkillDraftBody(BaseModel):
+    goal: str
+    name: str = ""
+    sections: list = []
+    tone: list = ["Professional"]
+    requires_corpus: bool = False
+    citations: bool = False
+    max_tokens: int = 2000
+    example_output: str = ""
+    model: Optional[str] = None
+
+
 # ── Routes: UI ───────────────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -1251,6 +1263,80 @@ async def generate_document(body: GenerateBody):
         "citations": result.citations,
         "generation_time_ms": result.generation_time_ms,
     }
+
+
+@app.post("/api/skills/draft")
+async def draft_skill(body: SkillDraftBody):
+    import asyncio
+
+    from .skill_drafter import extract_rules, generate_skill_draft
+
+    model_id = body.model or f"ollama:{get_setting('llm_model') or LLM_MODEL}"
+    provider, model, api_key, ollama_host = _resolve_llm_for_chat(model_id)
+
+    if provider == "trial":
+        from .trial import trial_generate as _trial_gen
+
+        def llm_fn(prompt: str) -> str:
+            return _trial_gen(prompt, temperature=0.4, max_tokens=4000)
+    elif provider == "ollama":
+        import requests as _req
+
+        def llm_fn(prompt: str) -> str:
+            r = _req.post(
+                f"{ollama_host}/api/generate",
+                json={"model": model, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0.4, "num_predict": 4000}},
+                timeout=120,
+            )
+            r.raise_for_status()
+            return r.json().get("response", "")
+    else:
+        from .llm.factory import create_generation_provider
+
+        gen_kwargs = {"provider_name": provider, "model": model}
+        if api_key:
+            gen_kwargs["api_key"] = api_key
+        _provider = create_generation_provider(**gen_kwargs)
+
+        def llm_fn(prompt: str) -> str:
+            return _provider.generate(prompt, temperature=0.4, max_tokens=4000)
+
+    rules: list = []
+    doc_types: list = []
+    if body.requires_corpus and _get_chunk_count() > 0:
+        try:
+            retriever = _build_corpus_retriever()
+            rules = await asyncio.to_thread(extract_rules, llm_fn, retriever)
+        except Exception:
+            rules = []
+        sources = _get_sources()
+        doc_types = list({Path(s).suffix.lstrip(".").lower() for s in sources if "." in s})
+
+    try:
+        result = await asyncio.to_thread(
+            generate_skill_draft,
+            llm_fn=llm_fn,
+            goal=body.goal,
+            name=body.name,
+            sections=body.sections,
+            tone=body.tone,
+            requires_corpus=body.requires_corpus,
+            citations=body.citations,
+            max_tokens=body.max_tokens,
+            example_output=body.example_output,
+            rules=rules,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail="Skill drafting failed. The model may be slow or unreachable — try again or choose a different model.",
+        )
+
+    result["doc_types"] = doc_types
+    return result
 
 
 @app.post("/api/skills/upload")

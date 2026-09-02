@@ -27,6 +27,9 @@ class Skill(BaseModel):
     citation_required: bool = False
     escalation_triggers: List[str] = Field(default_factory=list)
 
+    skill_type: str = "document"
+    corpus_doc_types: List[str] = Field(default_factory=list)
+
     tags: List[str] = Field(default_factory=list)
     deprecated: bool = False
 

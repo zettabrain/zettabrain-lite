@@ -249,10 +249,11 @@
   .tone-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
   .preview-box { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 16px; font-family: 'Courier New', monospace; font-size: 12px; color: var(--text2); white-space: pre-wrap; max-height: 400px; overflow-y: auto; line-height: 1.6; }
   .wizard-modal { max-width: 720px; max-height: 90vh; }
-  .industry-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .industry-chip { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); font-size: 12px; cursor: pointer; text-align: center; transition: all 0.15s; }
-  .industry-chip:hover { border-color: var(--accent); color: var(--accent); }
-  .industry-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .wiz-quality-banner { padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-bottom: 12px; display: none; }
+  .wiz-quality-banner.pass { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.3); color: var(--green); }
+  .wiz-quality-banner.warn { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3); color: #d97706; }
+  .wiz-quality-banner .score { font-weight: 700; font-size: 14px; }
+  .wiz-quality-banner .issues { margin-top: 4px; font-size: 11px; opacity: 0.85; }
   .skill-source-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-left: 6px; vertical-align: middle; }
   .skill-source-badge.builtin { background: rgba(99,102,241,0.15); color: var(--accent2); }
   .skill-source-badge.user { background: rgba(34,197,94,0.15); color: var(--green); }
@@ -905,7 +906,7 @@ Instructions for the AI..."></textarea>
       <!-- Page 2: Options -->
       <div class="wizard-page" id="wiz-page-2">
         <div class="form-group">
-          <label>Tone</label>
+          <label>Tone <span style="font-weight:400; color:var(--text3); font-size:11px;">(pick up to 3)</span></label>
           <div class="tone-options" id="wiz-tones">
             <div class="tone-chip selected" onclick="selectTone(this)">Professional</div>
             <div class="tone-chip" onclick="selectTone(this)">Formal</div>
@@ -924,21 +925,6 @@ Instructions for the AI..."></textarea>
             <option value="4000">Very Long (~4+ pages)</option>
           </select>
         </div>
-        <div class="form-group" style="margin-top:14px;">
-          <label>Category</label>
-          <div class="industry-grid">
-            <div class="industry-chip" onclick="selectIndustry(this)">IT / DevOps</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Engineering</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Sales</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Legal</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Finance</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">HR</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Healthcare</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Consulting</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">Marketing</div>
-            <div class="industry-chip" onclick="selectIndustry(this)">General</div>
-          </div>
-        </div>
         <label class="checkbox-row" style="margin-top:14px;">
           <input type="checkbox" id="wiz-corpus">
           Use my ingested documents as a data source (pulls real data from your files)
@@ -947,10 +933,15 @@ Instructions for the AI..."></textarea>
           <input type="checkbox" id="wiz-citations">
           Include source citations in the output
         </label>
+        <div class="form-group" style="margin-top:14px;">
+          <label>Paste an example document <span style="font-weight:400; color:var(--text3); font-size:11px;">(optional, but one real example is worth more than any other input)</span></label>
+          <textarea class="input-field" id="wiz-example" rows="4" placeholder="Paste a real past document here — a proposal you liked, a report that hit the right tone, a template you follow. The AI will match its structure and conventions."></textarea>
+        </div>
       </div>
 
       <!-- Page 3: Review & Save -->
       <div class="wizard-page" id="wiz-page-3">
+        <div class="wiz-quality-banner" id="wiz-quality-banner"></div>
         <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
           Here's the skill file ZettaBrain will use. You can edit it if you want, or just hit Save.
         </p>
@@ -2097,8 +2088,8 @@ function dismissGuide() {
 
 // ── Skill Wizard State ───────────────────────────────
 let wizStep = 1;
-let wizSelectedIndustry = '';
 let wizSelectedTones = [];
+let wizDraftQuality = null;
 
 // ── Skill Markdown Viewer ─────────────────────────────
 let _viewSkillName = '';
@@ -2196,22 +2187,26 @@ function selectTemplate(el, key) {
 
 function openSkillWizard() {
   wizStep = 1;
-  wizSelectedIndustry = '';
   wizSelectedTones = ['Professional'];
   wizSelectedTemplate = '';
+  wizDraftQuality = null;
 
   document.getElementById('wiz-name').value = '';
   document.getElementById('wiz-desc').value = '';
   document.getElementById('wiz-corpus').checked = false;
   document.getElementById('wiz-maxlen').value = '2000';
   document.getElementById('wiz-citations').checked = false;
+  document.getElementById('wiz-example').value = '';
+  document.getElementById('wiz-preview').value = '';
 
-  document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.tone-chip').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
-  // Default: Professional selected
   const toneChips = document.querySelectorAll('.tone-chip');
   if (toneChips.length > 0) toneChips[0].classList.add('selected');
+
+  const banner = document.getElementById('wiz-quality-banner');
+  banner.style.display = 'none';
+  banner.className = 'wiz-quality-banner';
 
   updateWizSteps();
   document.getElementById('wizard-modal').classList.add('open');
@@ -2221,13 +2216,35 @@ function closeSkillWizard() {
   document.getElementById('wizard-modal').classList.remove('open');
 }
 
-function selectIndustry(el) {
-  document.querySelectorAll('.industry-chip').forEach(c => c.classList.remove('selected'));
-  el.classList.add('selected');
-  wizSelectedIndustry = el.textContent.trim();
-}
+const TONE_CONFLICTS = {
+  'Formal': 'Friendly',
+  'Friendly': 'Formal',
+  'Technical': 'Concise',
+  'Concise': 'Technical',
+};
 
 function selectTone(el) {
+  const tone = el.textContent.trim();
+  const selected = el.classList.contains('selected');
+
+  if (!selected) {
+    const currentCount = document.querySelectorAll('.tone-chip.selected').length;
+    if (currentCount >= 3) {
+      toast('Pick up to 3 tones', 'info');
+      return;
+    }
+    const conflict = TONE_CONFLICTS[tone];
+    if (conflict) {
+      const chips = document.querySelectorAll('.tone-chip');
+      chips.forEach(c => {
+        if (c.textContent.trim() === conflict && c.classList.contains('selected')) {
+          c.classList.remove('selected');
+          toast(`Removed "${conflict}" — it conflicts with "${tone}"`, 'info');
+        }
+      });
+    }
+  }
+
   el.classList.toggle('selected');
   wizSelectedTones = Array.from(document.querySelectorAll('.tone-chip.selected')).map(c => c.textContent.trim());
 }
@@ -2244,22 +2261,91 @@ function updateWizSteps() {
   nextBtn.textContent = wizStep === 3 ? 'Save Skill' : 'Next';
 }
 
-function wizNext() {
+async function wizNext() {
+  const btn = document.getElementById('wiz-next');
+
   if (wizStep === 1) {
     const name = document.getElementById('wiz-name').value.trim();
     const desc = document.getElementById('wiz-desc').value.trim();
     if (!name) { toast('Give your skill a name', 'error'); return; }
     if (!desc) { toast('Describe what the skill should generate', 'error'); return; }
   }
+
   if (wizStep === 2) {
-    document.getElementById('wiz-preview').value = buildSkillMarkdown();
+    const name = document.getElementById('wiz-name').value.trim();
+    const desc = document.getElementById('wiz-desc').value.trim();
+    const corpus = document.getElementById('wiz-corpus').checked;
+    const maxTokens = document.getElementById('wiz-maxlen').value;
+    const citations = document.getElementById('wiz-citations').checked;
+    const example = document.getElementById('wiz-example').value.trim();
+    const tones = wizSelectedTones.length > 0 ? wizSelectedTones : ['Professional'];
+    const tmpl = SKILL_TEMPLATES[wizSelectedTemplate] || SKILL_TEMPLATES.custom;
+    const sections = tmpl.sections.length > 0 ? tmpl.sections : [];
+
+    btn.disabled = true;
+    btn.textContent = 'Generating skill...';
+    document.getElementById('wiz-prev').disabled = true;
+
+    try {
+      const r = await fetch('/api/skills/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal: desc,
+          name: name,
+          sections: sections,
+          tone: tones,
+          requires_corpus: corpus,
+          citations: citations,
+          max_tokens: parseInt(maxTokens),
+          example_output: example,
+          model: currentModel || undefined,
+        })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Draft failed');
+
+      document.getElementById('wiz-preview').value = data.content;
+      wizDraftQuality = data.quality;
+      showWizQuality(data.quality, data.rules_found || 0);
+    } catch (e) {
+      toast('AI draft failed, using local builder: ' + e.message, 'info');
+      document.getElementById('wiz-preview').value = buildSkillMarkdown();
+      wizDraftQuality = null;
+      const banner = document.getElementById('wiz-quality-banner');
+      banner.style.display = 'none';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Next';
+      document.getElementById('wiz-prev').disabled = false;
+    }
   }
+
   if (wizStep === 3) {
     saveWizardSkill();
     return;
   }
   wizStep++;
   updateWizSteps();
+}
+
+function showWizQuality(quality, rulesFound) {
+  const banner = document.getElementById('wiz-quality-banner');
+  if (!quality) { banner.style.display = 'none'; return; }
+
+  const passed = quality.passed;
+  banner.className = 'wiz-quality-banner ' + (passed ? 'pass' : 'warn');
+
+  let html = `<span class="score">Score: ${quality.score}/100</span>`;
+  if (rulesFound > 0) html += ` &middot; ${rulesFound} rule${rulesFound !== 1 ? 's' : ''} extracted from your documents`;
+
+  const issues = [...(quality.errors || []), ...(quality.warnings || [])].slice(0, 3);
+  if (issues.length > 0) {
+    html += '<div class="issues">' + issues.map(i => '&bull; ' + i).join('<br>') + '</div>';
+  }
+
+  banner.innerHTML = html;
+  banner.style.display = 'block';
 }
 
 function wizPrev() {
@@ -2269,22 +2355,55 @@ function wizPrev() {
   }
 }
 
+const SECTION_GUIDANCE = {
+  'executive summary': 'Open with the client\'s problem in their own numbers and their deadline, not with who we are. State the proposed approach in three sentences and give the total figure here rather than deferring it to the pricing table. One page maximum.',
+  'understanding of requirements': 'Restate the client\'s requirements in your own words, demonstrating that you have read and understood their brief. Reference specific constraints, deadlines, or success criteria they mentioned. Do not add requirements they did not ask for.',
+  'proposed approach': 'Describe the methodology, phases, and key activities. Each phase must have a deliverable and an estimated duration. Reference similar past engagements if the corpus provides them.',
+  'timeline & milestones': 'A table or phased timeline with start and end dates for each phase. Flag dependencies between phases. Include buffer periods for review cycles.',
+  'team': 'Name the lead and key team members with their role, relevant experience, and one case-study reference each where available.',
+  'investment': 'A pricing table with role, rate, estimated hours, and line total. Show subtotals per phase and a grand total. If a discount applies, show pre-discount and post-discount on separate rows.',
+  'terms & conditions': 'Pull standard terms from the corpus. Include payment terms, validity period, IP ownership, and termination provisions. Cite the source document for each clause.',
+  'summary': 'Three to five sentences covering the overall status, the single biggest achievement, and the single biggest risk. No filler phrasing.',
+  'progress this period': 'A table: Task, Owner, Status, % Complete, Notes. Every row must cite a source. Do not estimate percentages without tracker data.',
+  'key issues & risks': 'Numbered list. Each entry: what the issue or risk is, who owns resolution, target date, and likelihood/impact assessment.',
+  'metrics': 'A table of KPIs with target, actual, and variance. Flag any metric that is more than 10% off target.',
+  'next steps': 'Bulleted list of planned actions. Each must have an owner and a target date. Do not list vague intentions.',
+  'subject line': 'A clear, specific subject line under 60 characters. Include the key action or topic, not a generic greeting.',
+  'email body': 'Open with context (one sentence of why you are writing), then the ask or information, then the next step. Three paragraphs maximum.',
+  'purpose': 'One paragraph stating what this procedure accomplishes and when it should be used. Include the triggering event or condition.',
+  'scope': 'Who this procedure applies to, what systems or processes it covers, and any explicit exclusions.',
+  'prerequisites': 'A numbered checklist of what must be in place before starting. Include access permissions, tools, and approvals.',
+  'procedure steps': 'Numbered steps with one action per step. Each step must be independently verifiable — the person can confirm they did it correctly before moving on.',
+  'troubleshooting': 'A table: Symptom, Likely Cause, Resolution. Cover the three most common failure modes for this procedure.',
+  'revision history': 'A table: Date, Version, Author, Change Summary. Include the current version.',
+  'overview': 'Summarize the key points in three to five sentences. State the conclusion or recommendation first, then the supporting context.',
+  'key points': 'Bulleted list of the most important findings or decisions. Each bullet must be a complete, self-contained statement.',
+  'decisions': 'A table: Decision, Made By, Date, Rationale. Include only decisions that were actually made, not pending ones.',
+  'action items': 'A table: Action, Owner, Due Date, Status. Every action must have a named owner and a specific date.',
+  'details': 'Present the core content organized by topic. Use subheadings if the section exceeds one page. Include specific data, figures, or references rather than general statements.',
+  'conclusion': 'Restate the key recommendation or finding. List the one to three most important next steps. Do not introduce new information here.',
+};
+
 function buildSkillMarkdown() {
   const name = document.getElementById('wiz-name').value.trim();
   const desc = document.getElementById('wiz-desc').value.trim();
   const corpus = document.getElementById('wiz-corpus').checked;
   const maxTokens = document.getElementById('wiz-maxlen').value;
   const citations = document.getElementById('wiz-citations').checked;
-  const industry = wizSelectedIndustry || 'General';
   const tones = wizSelectedTones.length > 0 ? wizSelectedTones : ['Professional'];
   const tmpl = SKILL_TEMPLATES[wizSelectedTemplate] || SKILL_TEMPLATES.custom;
   const sections = tmpl.sections.length > 0 ? tmpl.sections : ['Overview', 'Details', 'Conclusion'];
+  const nameSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+  let description = desc;
+  if (description.length < 120) description += '. Use this when you need to generate this type of document.';
+  if (description.length < 120) description += ' Retrieve relevant corpus documents and apply organizational rules.';
 
   let md = '---\n';
-  md += `name: ${name}\n`;
+  md += `name: ${nameSlug}\n`;
   md += `version: 1.0.0\n`;
-  md += `description: ${desc.split('\n')[0].substring(0, 200)}\n`;
-  md += `business_type: ${industry}\n`;
+  md += `description: ${description.split('\n')[0]}\n`;
+  md += `skill_type: document\n`;
   md += `requires_corpus: ${corpus}\n`;
   md += `temperature: 0.4\n`;
   md += `max_tokens: ${maxTokens}\n`;
@@ -2294,41 +2413,76 @@ function buildSkillMarkdown() {
   md += `# ${name}\n\n`;
   md += `${desc}\n\n`;
 
+  md += `## Retrieval Order\n\n`;
   if (corpus) {
-    md += `## Data Sources\n`;
-    md += `Use the provided corpus context to ground your output in real data. `;
-    if (citations) md += `Cite sources in brackets, e.g. [filename.pdf]. `;
-    md += `Do not invent information that is not in the provided documents.\n\n`;
+    md += `1. Query the corpus for documents most relevant to the user's request.\n`;
+    md += `2. Query for organizational policies, standards, or templates that apply.\n`;
+    md += `3. Query for past examples of this document type.\n\n`;
+  } else {
+    md += `1. Use only the information provided in the user's request.\n`;
+    md += `2. If specific data is needed but not provided, mark it with [NEEDS INPUT].\n\n`;
   }
 
-  md += `## Output Format\n\n`;
+  md += `## Rules\n\n`;
+  md += `- Every claim must be traceable to a source document or the user's input. Do not invent facts.\n`;
+  md += `- Quantify wherever possible — use numbers, percentages, and dates instead of vague qualifiers.\n`;
+  md += `- If a figure, threshold, or approval authority is not available, do not guess — add it to the Gaps section.\n`;
+  md += `- Never round or approximate a number from a source document. "$4,750" stays "$4,750".\n`;
+  md += `- Every section must add information the reader does not already have. Delete any section that only restates its heading.\n`;
+  if (corpus) md += `- Only use facts from the provided corpus documents. Cite sources in brackets when referencing specific data.\n`;
+  md += `- Match the level of detail to the user's request and stated audience.\n`;
+  md += `- If information is missing for a required field, use [NEEDS INPUT: description of what is needed].\n`;
+  md += `- Do not include placeholder language, lorem ipsum, or template markers in the final output.\n`;
+  md += `- The output must be complete and ready to use — no "insert X here" instructions to the reader.\n\n`;
+
+  md += `## Boundaries\n\n`;
+  md += `- Never fabricate data, statistics, quotes, or source references.\n`;
+  md += `- Do not include confidential internal information (margins, cost structures, internal rates) unless the user explicitly requests it.\n`;
+  md += `- Must not make promises, guarantees, or commitments on behalf of the organization.\n`;
+  md += `- Do not reference competitors by name unless the user's input explicitly discusses them.\n`;
+  md += `- Prohibited: generating content that contradicts information in the corpus documents.\n\n`;
+
+  md += `## Output Structure\n\n`;
   sections.forEach(s => {
+    const key = s.toLowerCase();
+    const guidance = SECTION_GUIDANCE[key] || `Provide specific, actionable content for this section. Include concrete data, names, dates, or figures rather than general statements. If the necessary information is not available, state what is missing using [NEEDS INPUT].`;
     md += `### ${s}\n`;
-    md += `Write the ${s.toLowerCase()} section based on the user's input`;
-    if (corpus) md += ` and the corpus context`;
-    md += `.\n\n`;
+    md += `${guidance}\n\n`;
   });
 
-  md += `## Style\n`;
+  md += `## Self-Check\n\n`;
+  md += `Before returning the final output, verify:\n`;
+  md += `- [ ] No section restates its heading without adding information.\n`;
+  md += `- [ ] Every factual claim traces to a source or the user's input.\n`;
+  md += `- [ ] No fabricated figures, names, or dates appear anywhere.\n`;
+  md += `- [ ] All [NEEDS INPUT] placeholders identify specifically what is missing.\n`;
+  md += `- [ ] The document is complete — no "insert here" instructions remain.\n`;
+  if (corpus) md += `- [ ] Source citations are present for corpus-derived information.\n`;
+  md += `- [ ] The tone is consistent throughout (no mix of formal and casual).\n\n`;
+
+  md += `## Style\n\n`;
   tones.forEach(t => {
     const guidelines = {
-      'Professional': '- Use clear, business-appropriate language',
-      'Formal': '- Use formal tone, avoid contractions and colloquialisms',
-      'Friendly': '- Use warm, approachable language while maintaining credibility',
-      'Technical': '- Use precise technical terminology appropriate to the audience',
-      'Concise': '- Keep sentences short, eliminate filler words',
-      'Persuasive': '- Lead with benefits, use active voice, include clear calls to action',
+      'Professional': '- Use clear, business-appropriate language.',
+      'Formal': '- Use formal tone, avoid contractions and colloquialisms.',
+      'Friendly': '- Use warm, approachable language while maintaining credibility.',
+      'Technical': '- Use precise technical terminology appropriate to the audience.',
+      'Concise': '- Keep sentences short, eliminate filler words, favor tables over paragraphs.',
+      'Persuasive': '- Lead with benefits, use active voice, include clear calls to action.',
     };
-    md += (guidelines[t] || `- Maintain a ${t.toLowerCase()} tone`) + '\n';
+    md += (guidelines[t] || `- Maintain a ${t.toLowerCase()} tone.`) + '\n';
   });
-  md += '- Use bullet points and tables where they improve readability\n';
-  md += '- Adapt detail level to the audience\n';
+  md += '- Use tables for any data with three or more comparable items.\n';
 
-  md += `\n## Rules\n`;
-  md += `- If information is missing, use [NEEDS INPUT] placeholders\n`;
-  md += `- Follow the output format above\n`;
-  if (corpus) md += `- Only use facts from the provided corpus\n`;
-  md += `- Match the level of detail to the user's request\n`;
+  if (corpus) {
+    md += `\n## Abstention\n\n`;
+    md += `If the corpus contains no documents relevant to the user's request, do not generate the document. Instead output: "[INSUFFICIENT DATA] No relevant documents found in the corpus for this request. Upload the relevant source documents and re-run this skill."\n`;
+  }
+
+  md += `\n## Gaps\n\n`;
+  md += `List any information this skill needs but does not yet have:\n`;
+  md += `- Organization-specific thresholds, approval authorities, and compliance requirements (upload your policy documents to fill these automatically).\n`;
+  md += `- Named roles and individuals who approve or sign off on this document type.\n`;
 
   return md;
 }

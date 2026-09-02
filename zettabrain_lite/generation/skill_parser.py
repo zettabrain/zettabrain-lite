@@ -47,6 +47,8 @@ class SkillParser:
             "max_tokens",
             "citation_required",
             "escalation_triggers",
+            "skill_type",
+            "corpus_doc_types",
             "tags",
             "deprecated",
         ]

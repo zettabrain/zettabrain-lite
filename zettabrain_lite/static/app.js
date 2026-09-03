@@ -1364,16 +1364,16 @@ function selectTemplate(el, key) {
 }
 
 let wizDocuments = [];
-let wizSelectedDoc = null;
-let wizUploadedFileContent = '';
+let wizSelectedDocs = [];
+let wizUploadedFiles = [];
 
 function openSkillWizard() {
   wizStep = 1;
   wizSelectedTones = ['Professional'];
   wizSelectedTemplate = '';
   wizDraftQuality = null;
-  wizSelectedDoc = null;
-  wizUploadedFileContent = '';
+  wizSelectedDocs = [];
+  wizUploadedFiles = [];
 
   document.getElementById('wiz-name').value = '';
   document.getElementById('wiz-desc').value = '';
@@ -1619,13 +1619,18 @@ function renderDocPickerList(docs) {
     list.innerHTML = '<div class="doc-picker-empty">No ingested documents found. Ingest files first, or use Upload or Paste instead.</div>';
     return;
   }
-  list.innerHTML = docs.map((d, i) => `
-    <div class="doc-picker-item${wizSelectedDoc && wizSelectedDoc.path === d.path ? ' selected' : ''}" onclick="selectDocForExample(${i})">
+  const selCount = wizSelectedDocs.length;
+  const header = selCount > 0 ? `<div class="doc-picker-count">${selCount} document${selCount > 1 ? 's' : ''} selected</div>` : '';
+  list.innerHTML = header + docs.map((d, i) => {
+    const isSelected = wizSelectedDocs.some(s => s.path === d.path);
+    return `
+    <div class="doc-picker-item${isSelected ? ' selected' : ''}" onclick="selectDocForExample(${i})">
+      <span class="doc-picker-check">${isSelected ? '&#9745;' : '&#9744;'}</span>
       <span class="doc-ext">${d.ext}</span>
       <span class="doc-name" title="${d.name}">${d.name}</span>
       <span class="doc-size">${d.size_kb > 0 ? d.size_kb + ' KB' : ''}</span>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 function filterDocPicker() {
@@ -1640,44 +1645,58 @@ function selectDocForExample(idx) {
   const doc = filtered[idx];
   if (!doc) return;
 
-  if (wizSelectedDoc && wizSelectedDoc.path === doc.path) {
-    wizSelectedDoc = null;
+  const existing = wizSelectedDocs.findIndex(s => s.path === doc.path);
+  if (existing >= 0) {
+    wizSelectedDocs.splice(existing, 1);
   } else {
-    wizSelectedDoc = doc;
+    wizSelectedDocs.push(doc);
   }
   renderDocPickerList(filtered);
 }
 
 function handleExampleFileUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+  const files = Array.from(event.target.files);
+  if (!files.length) return;
   const nameEl = document.getElementById('example-upload-filename');
-  nameEl.textContent = file.name;
+  nameEl.textContent = files.length === 1 ? files[0].name : files.length + ' files selected';
 
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    wizUploadedFileContent = e.target.result;
-  };
-  reader.readAsText(file);
+  wizUploadedFiles = [];
+  let loaded = 0;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      wizUploadedFiles.push({ name: file.name, content: e.target.result });
+      loaded++;
+      if (loaded === files.length) {
+        nameEl.textContent = files.map(f => f.name).join(', ');
+      }
+    };
+    reader.readAsText(file);
+  });
 }
 
 async function getWizardExampleContent() {
   const activeTab = document.querySelector('.example-source-tab.active');
   const tab = activeTab ? activeTab.textContent.trim() : 'Paste Text';
 
-  if (tab === 'From Library' && wizSelectedDoc) {
-    try {
-      const r = await fetch('/api/documents/content?path=' + encodeURIComponent(wizSelectedDoc.path));
-      if (r.ok) {
-        const data = await r.json();
-        return data.content || '';
-      }
-    } catch (e) { /* fall through */ }
-    return '';
+  if (tab === 'From Library' && wizSelectedDocs.length > 0) {
+    const parts = [];
+    for (const doc of wizSelectedDocs) {
+      try {
+        const r = await fetch('/api/documents/content?path=' + encodeURIComponent(doc.path));
+        if (r.ok) {
+          const data = await r.json();
+          if (data.content) {
+            parts.push('--- ' + doc.name + ' ---\n' + data.content);
+          }
+        }
+      } catch (e) { /* skip this doc */ }
+    }
+    return parts.join('\n\n');
   }
 
-  if (tab === 'Upload File' && wizUploadedFileContent) {
-    return wizUploadedFileContent;
+  if (tab === 'Upload File' && wizUploadedFiles.length > 0) {
+    return wizUploadedFiles.map(f => '--- ' + f.name + ' ---\n' + f.content).join('\n\n');
   }
 
   return document.getElementById('wiz-example').value.trim();

@@ -312,6 +312,9 @@
   .doc-picker-item .doc-name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .doc-picker-item .doc-size { color: var(--text3); font-size: 11px; }
   .doc-picker-empty { padding: 20px; text-align: center; color: var(--text3); font-size: 12px; }
+  .doc-picker-check { font-size: 14px; color: var(--text3); flex-shrink: 0; }
+  .doc-picker-item.selected .doc-picker-check { color: var(--accent); }
+  .doc-picker-count { padding: 4px 10px; font-size: 11px; font-weight: 600; color: var(--accent); background: rgba(59,130,246,0.08); border-bottom: 1px solid var(--border); }
   .example-upload-zone { border: 1px dashed var(--border); border-radius: 6px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.15s; }
   .example-upload-zone:hover { border-color: var(--accent); background: rgba(59,130,246,0.04); }
   .example-upload-zone .upload-icon { font-size: 24px; margin-bottom: 6px; }

@@ -694,10 +694,10 @@ Instructions for the AI..."></textarea>
           <div class="example-source-panel" id="example-panel-upload">
             <div class="example-upload-zone" id="example-upload-zone" onclick="document.getElementById('example-file-input').click()">
               <div class="upload-icon">&#128206;</div>
-              <p>Click to select a file (.pdf, .docx, .txt, .md)</p>
+              <p>Click to select files (.pdf, .docx, .txt, .md)</p>
               <div class="filename" id="example-upload-filename"></div>
             </div>
-            <input type="file" id="example-file-input" accept=".pdf,.docx,.txt,.md,.doc" style="display:none;" onchange="handleExampleFileUpload(event)">
+            <input type="file" id="example-file-input" accept=".pdf,.docx,.txt,.md,.doc" multiple style="display:none;" onchange="handleExampleFileUpload(event)">
           </div>
           <div class="example-source-panel" id="example-panel-paste">
             <textarea class="input-field" id="wiz-example" rows="4" placeholder="Paste a real past document here — a proposal you liked, a report that hit the right tone, a template you follow. The AI will match its structure and conventions."></textarea>

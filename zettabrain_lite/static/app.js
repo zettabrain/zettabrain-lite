@@ -278,7 +278,13 @@ async function sendMessage() {
       const r = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: question, skill_name: selectedSkill, model: currentModel })
+        body: JSON.stringify({
+          input: question,
+          skill_name: selectedSkill,
+          model: currentModel,
+          temperature: parseFloat(document.getElementById('gen-temp').value),
+          max_tokens: parseInt(document.getElementById('gen-tokens').value),
+        })
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || 'Generation failed');
@@ -738,6 +744,7 @@ function selectSkillFromSidebar(name) {
     setChatMode('skill');
   }
   updateSkillUI();
+  applySkillDefaults();
   switchTab('chat');
 }
 
@@ -762,6 +769,17 @@ function onSkillChange() {
     selectedSkill = sel.value;
   }
   updateSkillUI();
+  applySkillDefaults();
+}
+
+function applySkillDefaults() {
+  const skill = _allSkills.find(s => s.name === selectedSkill);
+  if (!skill) return;
+  const tempSlider = document.getElementById('gen-temp');
+  const tempVal = document.getElementById('gen-temp-val');
+  const tokensInput = document.getElementById('gen-tokens');
+  if (tempSlider) { tempSlider.value = skill.temperature; if (tempVal) tempVal.textContent = skill.temperature; }
+  if (tokensInput) tokensInput.value = skill.max_tokens;
 }
 
 function setChatMode(mode) {
@@ -769,11 +787,13 @@ function setChatMode(mode) {
   const chatBtn = document.getElementById('mode-chat');
   const skillBtn = document.getElementById('mode-skill');
   const picker = document.getElementById('skill-picker-wrap');
+  const genSettings = document.getElementById('gen-settings');
   const input = document.getElementById('chat-input');
 
   if (chatBtn) chatBtn.classList.toggle('active', mode === 'chat');
   if (skillBtn) skillBtn.classList.toggle('active', mode === 'skill');
   if (picker) picker.style.display = mode === 'skill' ? 'flex' : 'none';
+  if (genSettings) genSettings.style.display = mode === 'skill' ? 'flex' : 'none';
 
   if (mode === 'chat') {
     selectedSkill = null;
@@ -784,7 +804,12 @@ function setChatMode(mode) {
       const sel = document.getElementById('skill-select');
       if (sel) sel.value = selectedSkill;
     }
-    if (input && selectedSkill) input.placeholder = 'Describe what you want to generate with "' + selectedSkill + '"...';
+    applySkillDefaults();
+    if (input && selectedSkill) {
+      const skill = _allSkills.find(s => s.name === selectedSkill);
+      const tempHint = skill ? ' (recommended temp: ' + skill.temperature + ')' : '';
+      input.placeholder = 'Describe what you want to generate with "' + selectedSkill + '"...' + tempHint;
+    }
   }
   updateSkillUI();
 }
@@ -792,13 +817,18 @@ function setChatMode(mode) {
 function updateSkillUI() {
   const input = document.getElementById('chat-input');
   const sel = document.getElementById('skill-select');
+  const genSettings = document.getElementById('gen-settings');
 
   if (chatMode === 'skill' && selectedSkill) {
     if (sel) sel.value = selectedSkill;
-    if (input) input.placeholder = 'Describe what you want to generate with "' + selectedSkill + '"...';
+    if (genSettings) genSettings.style.display = 'flex';
+    const skill = _allSkills.find(s => s.name === selectedSkill);
+    const tempHint = skill ? ' (recommended temp: ' + skill.temperature + ')' : '';
+    if (input) input.placeholder = 'Describe what you want to generate with "' + selectedSkill + '"...' + tempHint;
   } else if (chatMode === 'chat') {
     selectedSkill = null;
     if (input) input.placeholder = 'Ask a question about your documents...';
+    if (genSettings) genSettings.style.display = 'none';
   }
 
   // Update sidebar active state
@@ -1273,7 +1303,19 @@ function closeSkillView() {
 
 function copySkillContent() {
   const content = document.getElementById('skill-view-content').value;
-  navigator.clipboard.writeText(content).then(() => toast('Copied to clipboard', 'success'));
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(content).then(() => toast('Copied to clipboard', 'success'));
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = content;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('Copied to clipboard', 'success');
+  }
 }
 
 function downloadSkillFile() {
@@ -1487,6 +1529,7 @@ async function wizNext() {
           citations: citations,
           max_tokens: parseInt(maxTokens),
           example_output: example,
+          source_documents: wizSelectedDocs.map(d => d.name).concat(wizUploadedFiles.map(f => f.name)),
           model: currentModel || undefined,
         })
       });
@@ -1713,6 +1756,10 @@ function buildSkillMarkdown() {
   const sections = tmpl.sections.length > 0 ? tmpl.sections : ['Overview', 'Details', 'Conclusion'];
   const nameSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
+  const pricingKeywords = ['quote', 'invoice', 'pricing', 'price', 'billing', 'estimate', 'rate'];
+  const isPricing = pricingKeywords.some(kw => name.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw));
+  const temperature = isPricing ? 0.1 : 0.4;
+
   let description = desc;
   if (description.length < 120) description += '. Use this when you need to generate this type of document.';
   if (description.length < 120) description += ' Retrieve relevant corpus documents and apply organizational rules.';
@@ -1723,13 +1770,32 @@ function buildSkillMarkdown() {
   md += `description: ${description.split('\n')[0]}\n`;
   md += `skill_type: document\n`;
   md += `requires_corpus: ${corpus}\n`;
-  md += `temperature: 0.4\n`;
+  md += `temperature: ${temperature}\n`;
   md += `max_tokens: ${maxTokens}\n`;
   if (citations) md += `citation_required: true\n`;
+
+  const sourceDocNames = [];
+  if (wizSelectedDocs.length > 0) {
+    wizSelectedDocs.forEach(d => sourceDocNames.push(d.name));
+  }
+  if (wizUploadedFiles.length > 0) {
+    wizUploadedFiles.forEach(f => sourceDocNames.push(f.name));
+  }
+  if (sourceDocNames.length > 0) {
+    md += `source_documents:\n`;
+    sourceDocNames.forEach(n => { md += `  - "${n}"\n`; });
+  }
   md += '---\n\n';
 
   md += `# ${name}\n\n`;
   md += `${desc}\n\n`;
+
+  if (sourceDocNames.length > 0) {
+    md += `## Source Documents\n\n`;
+    md += `This skill was created using the following reference documents:\n\n`;
+    sourceDocNames.forEach(n => { md += `- ${n}\n`; });
+    md += `\nWhen generating, prioritize retrieving and using data from these documents.\n\n`;
+  }
 
   md += `## Retrieval Order\n\n`;
   if (corpus) {

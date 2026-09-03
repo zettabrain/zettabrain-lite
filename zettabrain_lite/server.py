@@ -402,6 +402,7 @@ class SkillDraftBody(BaseModel):
     citations: bool = False
     max_tokens: int = 2000
     example_output: str = ""
+    source_documents: list = []
     model: Optional[str] = None
 
 
@@ -1167,6 +1168,8 @@ async def list_skills():
                             "requires_corpus": skill.requires_corpus,
                             "tags": skill.tags,
                             "source": source,
+                            "temperature": skill.temperature,
+                            "max_tokens": skill.max_tokens,
                         }
                     )
             except Exception:
@@ -1326,6 +1329,7 @@ async def draft_skill(body: SkillDraftBody):
             max_tokens=body.max_tokens,
             example_output=body.example_output,
             rules=rules,
+            source_documents=body.source_documents or [],
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))

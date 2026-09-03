@@ -548,6 +548,7 @@ def generate_skill_draft(
     max_tokens: int = 2000,
     example_output: str = "",
     rules: list[dict] | None = None,
+    source_documents: list[str] | None = None,
 ) -> dict:
     display_name = name or "Untitled Skill"
     name_slug = _to_slug(display_name)
@@ -559,6 +560,20 @@ def generate_skill_draft(
         description = f"{goal}. Use this when you need to generate this type of document."
     if len(description) < 120:
         description += " Retrieve relevant corpus documents and apply organizational rules."
+
+    _pricing_keywords = {"quote", "invoice", "pricing", "price", "billing", "estimate", "rate"}
+    name_lower = display_name.lower()
+    is_pricing = any(kw in name_lower for kw in _pricing_keywords)
+
+    extra_instructions = []
+    if is_pricing:
+        extra_instructions.append("TEMPERATURE: This is a pricing/quoting skill. Set temperature: 0.1 in frontmatter.")
+    if source_documents:
+        doc_list = "\n".join(f"  - {d}" for d in source_documents)
+        extra_instructions.append(
+            f"SOURCE DOCUMENTS (list these in frontmatter as source_documents and add a ## Source Documents "
+            f"section referencing them):\n{doc_list}"
+        )
 
     prompt = _GENERATOR_PROMPT.format(
         goal=goal,
@@ -573,6 +588,9 @@ def generate_skill_draft(
         citations=citations,
         max_tokens=max_tokens,
     )
+
+    if extra_instructions:
+        prompt += "\n\n" + "\n\n".join(extra_instructions)
 
     content = llm_fn(prompt)
     if not content or len(content.strip()) < 50:

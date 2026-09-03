@@ -814,44 +814,28 @@ async function loadWelcome() {
     const r = await fetch('/api/corpus/summary');
     const data = await r.json();
 
-    if (!data.has_docs) return;
+    const statsBar = document.getElementById('welcome-stats-bar');
+    if (!data.has_docs) {
+      if (statsBar) statsBar.innerHTML = '';
+      return;
+    }
 
     const titleEl = document.getElementById('welcome-title');
     const descEl = document.getElementById('welcome-desc');
-    const capEl = document.getElementById('welcome-capabilities');
-    const skillsEl = document.getElementById('welcome-skills');
-    const sugEl = document.getElementById('suggestions');
 
-    const sourceNames = data.sources.slice(0, 5).join(', ');
-    const moreCount = data.doc_count > 5 ? ` and ${data.doc_count - 5} more` : '';
+    titleEl.textContent = 'Your Knowledge Base is Ready';
+    descEl.textContent = 'Ask questions, generate documents, or explore insights from your ' + data.doc_count + ' indexed file' + (data.doc_count !== 1 ? 's' : '') + '.';
 
-    titleEl.textContent = 'Your knowledge base is ready';
-    descEl.innerHTML = `<strong>${data.doc_count} document${data.doc_count > 1 ? 's' : ''}</strong> loaded — ${sourceNames}${moreCount}.<br>Ask questions or generate professional documents.`;
-
-    if (data.skills && data.skills.length > 0) {
-      capEl.style.display = 'block';
-      skillsEl.innerHTML = data.skills.map(s => `
-        <div class="suggestion" onclick="activateSkillFromWelcome('${s.name.replace(/'/g, "\\'")}')">
-          &#9889; ${s.name}
-        </div>
-      `).join('');
+    const skillCount = (data.skills || []).length;
+    if (statsBar) {
+      statsBar.innerHTML =
+        '<span><span class="ws-num">' + data.doc_count + '</span> document' + (data.doc_count !== 1 ? 's' : '') + ' indexed</span>' +
+        '<span><span class="ws-num">' + skillCount + '</span> skill' + (skillCount !== 1 ? 's' : '') + ' ready</span>' +
+        '<span><span class="ws-num">' + (data.chunk_count || 0) + '</span> searchable chunks</span>';
     }
-
-    sugEl.innerHTML = `
-      <div class="suggestion" onclick="sendSuggestion(this)">What topics are covered?</div>
-      <div class="suggestion" onclick="sendSuggestion(this)">Summarise the key points</div>
-      <div class="suggestion" onclick="sendSuggestion(this)">What can I generate?</div>
-    `;
   } catch(e) {
     console.error('Failed to load welcome', e);
   }
-}
-
-function activateSkillFromWelcome(skillName) {
-  const sel = document.getElementById('skill-select');
-  sel.value = skillName;
-  onSkillChange();
-  document.getElementById('chat-input').focus();
 }
 
 // ── Export ────────────────────────────────────────────

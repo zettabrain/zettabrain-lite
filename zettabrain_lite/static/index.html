@@ -125,16 +125,38 @@
     <div class="panel active welcome-active" id="panel-chat" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
       <div class="chat-area" id="chat-area">
         <div class="welcome" id="welcome">
-          <div class="welcome-icon">&#129504;</div>
-          <h2 id="welcome-title">Ask anything about your documents</h2>
-          <p id="welcome-desc">ZettaBrain searches your local knowledge base using AI — completely private, zero cloud.</p>
-          <div id="welcome-capabilities" style="display:none; width:100%;">
-            <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:16px;" id="welcome-skills"></div>
+          <div class="welcome-hero">
+            <div class="welcome-glow"></div>
+            <div class="welcome-icon-ring">
+              <div class="welcome-icon">&#129504;</div>
+            </div>
+            <h2 id="welcome-title">Your AI-Powered Document Brain</h2>
+            <p id="welcome-desc">Turn your files into answers, insights, and professional documents — powered by AI, running entirely on your machine.</p>
           </div>
+          <div class="welcome-stats-bar" id="welcome-stats-bar"></div>
+          <div class="welcome-features" id="welcome-features">
+            <div class="welcome-feature" onclick="document.getElementById('chat-input').focus()">
+              <div class="feature-icon-wrap blue"><span>&#128172;</span></div>
+              <h4>Smart Q&A</h4>
+              <p>Ask anything about your documents. Get precise answers grounded in your actual data — not generic guesses.</p>
+            </div>
+            <div class="welcome-feature" onclick="setChatMode('skill')">
+              <div class="feature-icon-wrap purple"><span>&#128196;</span></div>
+              <h4>Generate Documents</h4>
+              <p>Create proposals, reports, and contracts using your real data and company standards.</p>
+            </div>
+            <div class="welcome-feature">
+              <div class="feature-icon-wrap green"><span>&#128274;</span></div>
+              <h4>Private & Local</h4>
+              <p>Everything runs on your machine. Your files never leave your infrastructure. No cloud required.</p>
+            </div>
+          </div>
+          <div class="welcome-divider"></div>
+          <div class="suggestions-label">Try asking</div>
           <div class="suggestions" id="suggestions">
-            <div class="suggestion" onclick="sendSuggestion(this)">What are the main topics?</div>
-            <div class="suggestion" onclick="sendSuggestion(this)">Summarise my documents</div>
-            <div class="suggestion" onclick="sendSuggestion(this)">List the key conclusions</div>
+            <div class="suggestion" onclick="sendSuggestion(this)">&#128269; What are the main topics in my documents?</div>
+            <div class="suggestion" onclick="sendSuggestion(this)">&#128203; Summarise the key points across my files</div>
+            <div class="suggestion" onclick="sendSuggestion(this)">&#9889; What can I generate with my skills?</div>
           </div>
         </div>
       </div>

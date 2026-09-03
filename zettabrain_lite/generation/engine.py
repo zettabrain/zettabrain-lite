@@ -91,7 +91,7 @@ class GenerationEngine:
             corpus_context = None
             citations: List[str] = []
 
-            if skill.requires_corpus and self._corpus_retriever:
+            if self._corpus_retriever:
                 corpus_text, citation_objects = self._corpus_retriever.get_context_for_generation(
                     query=request.input,
                     n_results=5,

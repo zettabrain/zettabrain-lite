@@ -1188,7 +1188,7 @@ async def generate_document(body: GenerateBody):
     skill = load_skill(skill_file)
 
     corpus_retriever = None
-    if skill.requires_corpus:
+    if _get_chunk_count() > 0:
         corpus_retriever = _build_corpus_retriever()
 
     model_id = body.model or f"ollama:{get_setting('llm_model') or LLM_MODEL}"

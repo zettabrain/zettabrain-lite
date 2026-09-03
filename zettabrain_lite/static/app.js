@@ -1377,7 +1377,7 @@ function openSkillWizard() {
 
   document.getElementById('wiz-name').value = '';
   document.getElementById('wiz-desc').value = '';
-  document.getElementById('wiz-corpus').checked = false;
+  document.getElementById('wiz-corpus').checked = true;
   document.getElementById('wiz-maxlen').value = '2000';
   document.getElementById('wiz-citations').checked = false;
   document.getElementById('wiz-example').value = '';

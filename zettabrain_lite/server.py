@@ -1466,6 +1466,67 @@ async def generation_detail(record_id: int):
         }
 
 
+def _parse_md_table(lines: list[str], start: int) -> tuple[list[list[str]], int]:
+    """Parse a markdown table starting at `start`. Returns (rows, next_line_index)."""
+    rows: list[list[str]] = []
+    i = start
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if not stripped.startswith("|"):
+            break
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if not all(c.replace("-", "").replace(":", "").strip() == "" for c in cells):
+            rows.append(cells)
+        i += 1
+    return rows, i
+
+
+def _render_pdf_table(pdf, rows: list[list[str]], lm: float, pw: float) -> None:
+    """Render a parsed markdown table into the PDF with borders and shaded header."""
+    if not rows:
+        return
+    n_cols = max(len(r) for r in rows)
+    for row in rows:
+        while len(row) < n_cols:
+            row.append("")
+
+    col_widths = []
+    for c in range(n_cols):
+        max_len = max(len(row[c]) for row in rows)
+        col_widths.append(max(max_len, 4))
+    total = sum(col_widths)
+    col_widths = [w / total * pw for w in col_widths]
+
+    row_h = 7
+    pdf.set_draw_color(200, 200, 200)
+    pdf.set_line_width(0.3)
+
+    for r_idx, row in enumerate(rows):
+        if pdf.get_y() + row_h > pdf.h - pdf.b_margin:
+            pdf.add_page()
+
+        x = lm
+        if r_idx == 0:
+            pdf.set_fill_color(240, 245, 250)
+            pdf.set_font("Helvetica", "B", 9)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+            pdf.set_font("Helvetica", "", 9)
+
+        is_total_row = any("total" in cell.lower() for cell in row) and r_idx == len(rows) - 1
+        if is_total_row:
+            pdf.set_fill_color(245, 248, 255)
+            pdf.set_font("Helvetica", "B", 9)
+
+        for c_idx, cell in enumerate(row):
+            pdf.set_xy(x, pdf.get_y())
+            pdf.cell(col_widths[c_idx], row_h, cell[:50], border=1, fill=True)
+            x += col_widths[c_idx]
+        pdf.ln(row_h)
+
+    pdf.ln(3)
+
+
 @app.get("/api/export/{record_id}/pdf")
 async def export_pdf(record_id: int):
     from .database import GenerationHistory, get_session
@@ -1539,10 +1600,19 @@ async def export_pdf(record_id: int):
     lm = pdf.l_margin
     pw = pdf.w - pdf.l_margin - pdf.r_margin
 
-    for line in content.split("\n"):
-        stripped = line.strip()
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
         if not stripped:
             pdf.ln(3)
+            i += 1
+            continue
+
+        if stripped.startswith("|") and i + 1 < len(lines) and lines[i + 1].strip().startswith("|"):
+            rows, i = _parse_md_table(lines, i)
+            _render_pdf_table(pdf, rows, lm, pw)
             continue
 
         pdf.set_x(lm)
@@ -1565,17 +1635,18 @@ async def export_pdf(record_id: int):
             pdf.set_x(lm)
             pdf.multi_cell(pw, 6, stripped[4:])
             pdf.ln(1)
-        elif stripped.startswith("- ") or stripped.startswith("* "):
+        elif stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("+ "):
             pdf.set_font("Helvetica", "", 10)
             indent = 8
             pdf.set_x(lm + indent)
-            pdf.multi_cell(pw - indent, 5.5, "- " + stripped[2:])
+            pdf.multi_cell(pw - indent, 5.5, "- " + stripped[2:].strip())
         elif stripped.startswith("**") and stripped.endswith("**"):
             pdf.set_font("Helvetica", "B", 10)
             pdf.multi_cell(pw, 5.5, stripped.strip("*"))
         else:
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(pw, 5.5, stripped)
+            pdf.multi_cell(pw, 5.5, stripped.replace("**", ""))
+        i += 1
 
     pdf.ln(10)
     pdf.set_draw_color(200, 200, 200)
@@ -1600,6 +1671,48 @@ async def export_pdf(record_id: int):
         media_type="application/pdf",
         filename=f"{safe_name}_{record.created_at.strftime('%Y%m%d')}.pdf",
     )
+
+
+def _render_docx_table(doc, rows: list[list[str]]) -> None:
+    """Render a parsed markdown table into the DOCX with borders and shaded header."""
+    from docx.oxml.ns import nsdecls
+    from docx.oxml.parser import parse_xml
+    from docx.shared import Pt, RGBColor
+
+    if not rows:
+        return
+    n_cols = max(len(r) for r in rows)
+    for row in rows:
+        while len(row) < n_cols:
+            row.append("")
+
+    table = doc.add_table(rows=len(rows), cols=n_cols)
+    table.style = "Table Grid"
+    table.autofit = True
+
+    for r_idx, row_data in enumerate(rows):
+        row = table.rows[r_idx]
+        for c_idx, cell_text in enumerate(row_data):
+            cell = row.cells[c_idx]
+            cell.text = ""
+            p = cell.paragraphs[0]
+            run = p.add_run(cell_text)
+            run.font.size = Pt(9)
+            run.font.name = "Calibri"
+
+            if r_idx == 0:
+                run.bold = True
+                run.font.color.rgb = RGBColor(30, 41, 59)
+                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="E8EDF5"/>')
+                cell._tc.get_or_add_tcPr().append(shading)
+
+            is_total_row = any("total" in c.lower() for c in row_data) and r_idx == len(rows) - 1
+            if is_total_row:
+                run.bold = True
+                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="F0F4FF"/>')
+                cell._tc.get_or_add_tcPr().append(shading)
+
+    doc.add_paragraph("")
 
 
 @app.get("/api/export/{record_id}/docx")
@@ -1645,8 +1758,15 @@ async def export_docx(record_id: int):
     doc.add_paragraph("")
 
     content = record.output_content or ""
-    for line in content.split("\n"):
-        stripped = line.strip()
+    all_lines = content.split("\n")
+    i = 0
+    while i < len(all_lines):
+        stripped = all_lines[i].strip()
+
+        if stripped.startswith("|") and i + 1 < len(all_lines) and all_lines[i + 1].strip().startswith("|"):
+            rows, i = _parse_md_table(all_lines, i)
+            _render_docx_table(doc, rows)
+            continue
 
         if stripped.startswith("# "):
             doc.add_heading(stripped[2:], level=1)
@@ -1654,16 +1774,17 @@ async def export_docx(record_id: int):
             doc.add_heading(stripped[3:], level=2)
         elif stripped.startswith("### "):
             doc.add_heading(stripped[4:], level=3)
-        elif stripped.startswith("- ") or stripped.startswith("* "):
-            doc.add_paragraph(stripped[2:], style="List Bullet")
+        elif stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("+ "):
+            doc.add_paragraph(stripped[2:].strip(), style="List Bullet")
         elif stripped.startswith("**") and stripped.endswith("**"):
             p = doc.add_paragraph()
             run = p.add_run(stripped.strip("*"))
             run.bold = True
         elif stripped == "":
-            continue
+            pass
         else:
             doc.add_paragraph(stripped)
+        i += 1
 
     doc.add_paragraph("")
     footer_para = doc.add_paragraph()

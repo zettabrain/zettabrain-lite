@@ -54,6 +54,13 @@ class GenerationEngine:
         if corpus_context:
             prompt_parts.append(corpus_context)
             prompt_parts.append("")
+            prompt_parts.append(
+                "IMPORTANT: The CORPUS DOCUMENTS above are authoritative source material retrieved from "
+                "the user's knowledge base. Use the exact figures, rates, terms, and rules found in these "
+                "documents. Do not mark data from these sources as 'DRAFT', 'ESTIMATED', or 'PRELIMINARY'. "
+                "If the corpus provides a specific number, use that number exactly."
+            )
+            prompt_parts.append("")
 
         if context:
             prompt_parts.append("# CONTEXT")
@@ -108,6 +115,11 @@ class GenerationEngine:
 
             temperature = request.temperature if request.temperature is not None else skill.temperature
             max_tokens = request.max_tokens if request.max_tokens is not None else skill.max_tokens
+
+            _pricing_keywords = {"quote", "invoice", "pricing", "price", "billing", "estimate", "rate"}
+            skill_lower = skill.name.lower()
+            if any(kw in skill_lower for kw in _pricing_keywords) and temperature > 0.15:
+                temperature = 0.1
 
             content = self.llm_provider.generate(prompt=prompt, temperature=temperature, max_tokens=max_tokens)
 

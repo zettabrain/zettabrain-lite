@@ -1765,7 +1765,7 @@ function buildSkillMarkdown() {
 
   const pricingKeywords = ['quote', 'invoice', 'pricing', 'price', 'billing', 'estimate', 'rate'];
   const isPricing = pricingKeywords.some(kw => name.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw));
-  const temperature = isPricing ? 0.1 : 0.4;
+  const temperature = isPricing ? 0.0 : 0.4;
 
   let description = desc;
   if (description.length < 120) description += '. Use this when you need to generate this type of document.';
@@ -1775,10 +1775,11 @@ function buildSkillMarkdown() {
   md += `name: ${nameSlug}\n`;
   md += `version: 1.0.0\n`;
   md += `description: ${description.split('\n')[0]}\n`;
-  md += `skill_type: document\n`;
+  md += `skill_type: ${isPricing ? 'quote' : 'document'}\n`;
   md += `requires_corpus: ${corpus}\n`;
   md += `temperature: ${temperature}\n`;
   md += `max_tokens: ${maxTokens}\n`;
+  if (isPricing) md += `deterministic: true\n`;
   if (citations) md += `citation_required: true\n`;
 
   const sourceDocNames = [];

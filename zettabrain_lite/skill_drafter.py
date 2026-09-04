@@ -567,7 +567,11 @@ def generate_skill_draft(
 
     extra_instructions = []
     if is_pricing:
-        extra_instructions.append("TEMPERATURE: This is a pricing/quoting skill. Set temperature: 0.1 in frontmatter.")
+        extra_instructions.append(
+            "PRICING SKILL: This is a pricing/quoting skill. Set temperature: 0.0 and deterministic: true in frontmatter. "
+            "The deterministic flag enables the Extract-Compute-Format pipeline which uses Python for all arithmetic "
+            "instead of relying on the LLM to calculate totals."
+        )
     if source_documents:
         doc_list = "\n".join(f"  - {d}" for d in source_documents)
         extra_instructions.append(

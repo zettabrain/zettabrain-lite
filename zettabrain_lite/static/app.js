@@ -291,7 +291,14 @@ async function sendMessage() {
 
       currentAnswer = data.content || '';
       const bubble = document.querySelector(`#${assistantId} .msg-bubble`);
-      if (bubble) bubble.innerHTML = mdToHtml(currentAnswer);
+      if (bubble) {
+        let warningHtml = '';
+        if (data.warnings && data.warnings.length) {
+          warningHtml = '<div style="background:var(--yellow,#f0ad4e);color:#333;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:0.9em">' +
+            '<strong>Review needed:</strong> ' + data.warnings.join(' ') + '</div>';
+        }
+        bubble.innerHTML = warningHtml + mdToHtml(currentAnswer);
+      }
 
       const meta = document.getElementById(assistantId + '-meta');
       if (meta) {

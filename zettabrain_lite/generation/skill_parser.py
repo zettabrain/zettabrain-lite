@@ -51,6 +51,8 @@ class SkillParser:
             "corpus_doc_types",
             "tags",
             "deprecated",
+            "source_documents",
+            "deterministic",
         ]
         for field in optional_fields:
             if field in metadata:

@@ -10,6 +10,11 @@ from ..base import LLMProvider
 
 
 class OllamaProvider(LLMProvider):
+    # Fixed seed used when temperature == 0 to make generation fully reproducible.
+    # Ollama's greedy decode (temperature=0) is already deterministic per-run, but
+    # setting an explicit seed eliminates any residual sampling variance across runs.
+    _DETERMINISTIC_SEED = 42
+
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
@@ -20,16 +25,24 @@ class OllamaProvider(LLMProvider):
         self.model = os.getenv("OLLAMA_MODEL", model)
         self.timeout = int(os.getenv("OLLAMA_TIMEOUT", str(timeout)))
 
+    def _build_options(self, temperature: float, max_tokens: int, extra: dict) -> dict:
+        """Build the Ollama options dict, injecting a fixed seed at temperature=0."""
+        options: dict = {"num_predict": max_tokens, "temperature": temperature}
+        if temperature == 0.0:
+            options["seed"] = self._DETERMINISTIC_SEED
+            # top_k=1 + top_p=1 with temperature=0 fully disables sampling
+            options["top_k"] = 1
+            options["top_p"] = 1.0
+        options.update(extra)
+        return options
+
     def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "temperature": temperature,
             "stream": False,
-            "options": {"num_predict": max_tokens},
+            "options": self._build_options(temperature, max_tokens, kwargs),
         }
-        if kwargs:
-            payload["options"].update(kwargs)
 
         try:
             with httpx.Client(timeout=self.timeout) as client:
@@ -47,12 +60,9 @@ class OllamaProvider(LLMProvider):
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "temperature": temperature,
             "stream": True,
-            "options": {"num_predict": max_tokens},
+            "options": self._build_options(temperature, max_tokens, kwargs),
         }
-        if kwargs:
-            payload["options"].update(kwargs)
 
         try:
             with httpx.Client(timeout=self.timeout) as client:

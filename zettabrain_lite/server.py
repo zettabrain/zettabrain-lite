@@ -1192,7 +1192,7 @@ async def generate_document(body: GenerateBody):
 
     corpus_retriever = None
     if _get_chunk_count() > 0:
-        corpus_retriever = _build_corpus_retriever()
+        corpus_retriever = _build_corpus_retriever(source_documents=skill.source_documents or None)
 
     model_id = body.model or f"ollama:{get_setting('llm_model') or LLM_MODEL}"
     provider, model, api_key, ollama_host = _resolve_llm_for_chat(model_id)
@@ -1264,6 +1264,7 @@ async def generate_document(body: GenerateBody):
         "skill_name": result.skill_name,
         "skill_version": result.skill_version,
         "citations": result.citations,
+        "warnings": result.warnings,
         "generation_time_ms": result.generation_time_ms,
     }
 
@@ -1960,21 +1961,63 @@ def _find_skill_file(skill_name: str):
     return None
 
 
-def _build_corpus_retriever():
+def _build_corpus_retriever(source_documents: list[str] | None = None):
+    from dataclasses import dataclass
+
+    @dataclass
+    class Citation:
+        document_title: str
+        citation_ref: str = ""
+
     class LiteCorpusRetriever:
+        def __init__(self, pinned_docs: list[str] | None = None):
+            self._pinned_docs = pinned_docs
+            self.retrieval_warnings: list[str] = []
+
+        def _retrieve_pinned(self, vs):
+            """Fetch ALL chunks from pinned documents by filename metadata."""
+            from langchain_core.documents import Document as LCDocument
+
+            collection = vs._collection
+            result = collection.get(
+                where={"filename": {"$in": self._pinned_docs}},
+                include=["documents", "metadatas"],
+            )
+            if not result["documents"]:
+                found = set()
+            else:
+                found = {m.get("filename") for m in result["metadatas"]}
+
+            for doc_name in self._pinned_docs:
+                if doc_name not in found:
+                    self.retrieval_warnings.append(
+                        f"Document '{doc_name}' not found in corpus. Upload it and re-ingest for accurate results."
+                    )
+
+            if not result["documents"]:
+                return []
+
+            paired = list(zip(result["documents"], result["metadatas"]))
+            paired.sort(key=lambda p: (p[1].get("filename", ""), p[1].get("page", 0)))
+
+            return [
+                LCDocument(page_content=text, metadata=meta)
+                for text, meta in paired
+            ]
+
         def get_context_for_generation(self, query, n_results=5, min_relevance=0.3, **kwargs):
             try:
                 vs = _get_vs()
-                sources = hybrid_retrieve(query, vs, top_k=n_results)
+
+                if self._pinned_docs:
+                    sources = self._retrieve_pinned(vs)
+                    if not sources:
+                        sources = hybrid_retrieve(query, vs, top_k=n_results)
+                else:
+                    sources = hybrid_retrieve(query, vs, top_k=n_results)
+
                 if not sources:
                     return None, []
-
-                from dataclasses import dataclass
-
-                @dataclass
-                class Citation:
-                    document_title: str
-                    citation_ref: str = ""
 
                 context_parts = ["# CORPUS CONTEXT (from document library)"]
                 citations = []
@@ -1988,4 +2031,4 @@ def _build_corpus_retriever():
             except Exception:
                 return None, []
 
-    return LiteCorpusRetriever()
+    return LiteCorpusRetriever(pinned_docs=source_documents)

@@ -33,6 +33,9 @@ class Skill(BaseModel):
     tags: List[str] = Field(default_factory=list)
     deprecated: bool = False
 
+    source_documents: List[str] = Field(default_factory=list)
+    deterministic: bool = False
+
 
 class GenerationRequest(BaseModel):
     input: str
@@ -52,4 +55,5 @@ class GenerationResult(BaseModel):
     success: bool = True
     error: Optional[str] = None
     citations: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
     generation_time_ms: Optional[int] = None

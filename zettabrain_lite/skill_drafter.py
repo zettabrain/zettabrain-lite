@@ -543,8 +543,30 @@ _CATEGORY_CONFIGS: dict[str, dict] = {
         "overrides": {"deterministic": True, "temperature": 0.0, "citation_required": True},
         "hint": (
             "PRICING SKILL: Set temperature: 0.0, deterministic: true, and citation_required: true in frontmatter. "
-            "The deterministic flag enables the Extract-Compute-Format pipeline which uses Python for all arithmetic "
-            "instead of relying on the LLM to calculate totals. Every rate and fee must cite the corpus source."
+            "The deterministic flag routes this skill through the Extract-Compute-Format pipeline — the LLM "
+            "extracts structured line items, Python computes all totals with exact decimal arithmetic, then the "
+            "LLM formats the result. The skill instructions must define the output table structure but must NOT "
+            "include calculation steps (the engine handles math). Instead, focus rules on: which fees apply when, "
+            "volume discount tiers with exact thresholds, tax treatment, payment terms by customer type, and what "
+            "to do when a price is not in the corpus (mark as [NEEDS INPUT], never invent). Include a line-item "
+            "table, subtotals, discounts, fees, tax, and grand total in the Output Structure."
+        ),
+    },
+    "proposal": {
+        "keywords": {"proposal", "rfp", "pitch", "business case", "sow", "scope of work", "engagement"},
+        "overrides": {"temperature": 0.3, "citation_required": True},
+        "hint": (
+            "PROPOSAL SKILL: Set temperature: 0.3 and citation_required: true in frontmatter. "
+            "Proposals must persuade, not just inform. The Output Structure must include: (1) an executive "
+            "summary that opens with the client's problem in their own language and states the proposed solution "
+            "and total investment in the first paragraph — never open with who you are; (2) a scope section with "
+            "explicit inclusions AND exclusions to prevent scope creep; (3) a timeline with milestones, dates, "
+            "and deliverables at each stage; (4) a pricing summary (reference the rate card from corpus if "
+            "available — do not invent rates); (5) qualifications or past work, cited from corpus; (6) terms "
+            "and conditions. In Rules: every claim about capabilities must cite a corpus source. In Boundaries: "
+            "never guarantee outcomes, never promise timelines not supported by the corpus, never disclose "
+            "internal cost structures. The tone should be confident and specific — replace 'extensive experience' "
+            "with the exact number of years or projects from the corpus."
         ),
     },
     "compliance": {
@@ -552,53 +574,93 @@ _CATEGORY_CONFIGS: dict[str, dict] = {
         "overrides": {"temperature": 0.1, "citation_required": True},
         "hint": (
             "COMPLIANCE / LEGAL SKILL: Set temperature: 0.1 and citation_required: true in frontmatter. "
-            "Every finding must cite the specific regulation, policy, or control requirement from the corpus. "
-            "Never state compliance status without evidence. Use precise, unambiguous language — 'compliant' "
-            "and 'non-compliant' require cited proof. Include an abstention rule if the corpus lacks the "
-            "relevant standards."
+            "Low temperature is critical — creative phrasing in compliance documents introduces ambiguity. "
+            "The Output Structure must include: (1) a findings table with columns for requirement ID, "
+            "description, status (compliant/non-compliant/partial/not assessed), evidence, and risk rating; "
+            "(2) a risk summary sorted by severity; (3) remediation recommendations with owners and deadlines. "
+            "In Rules: every compliance status must cite the specific regulation, clause, or policy section and "
+            "the evidence supporting the determination. Use 'not assessed' rather than guessing when evidence is "
+            "missing. In Boundaries: never state 'compliant' or 'non-compliant' without a cited source; never "
+            "provide legal advice or interpret regulations beyond what the corpus explicitly states; never omit "
+            "a finding to shorten the document. If the corpus does not contain the relevant regulatory "
+            "framework, abstain entirely."
         ),
     },
     "technical": {
         "keywords": {
-            "api", "documentation", "runbook", "sop", "data-dictionary", "architecture",
-            "technical", "specification", "system design",
+            "api", "documentation", "runbook", "sop", "procedure", "data-dictionary", "data dictionary",
+            "architecture", "technical", "specification", "system design",
         },
         "overrides": {"temperature": 0.1, "citation_required": True},
         "hint": (
             "TECHNICAL SKILL: Set temperature: 0.1 and citation_required: true in frontmatter. "
-            "Steps must be in executable order. Code examples must be syntactically correct. "
-            "Reference exact file paths, command names, and configuration keys from the corpus — "
-            "never paraphrase a technical identifier. Include version numbers when the corpus provides them."
+            "Low temperature prevents the model from paraphrasing technical identifiers — a renamed function "
+            "or wrong flag is worse than no documentation. In Rules: reference exact file paths, command names, "
+            "configuration keys, and version numbers from the corpus — never paraphrase a technical identifier. "
+            "Every code example must be syntactically correct for the language specified. Steps must be in "
+            "executable order with explicit prerequisites at the top. In Output Structure: include a "
+            "prerequisites section listing required tools, access, and versions; a step-by-step procedure where "
+            "each step has exactly one action; and a troubleshooting section for common failures. For API docs: "
+            "include endpoint, method, headers, request body with example, response with example, error codes, "
+            "and rate limits. In Boundaries: never invent endpoint paths, parameters, or return values not in "
+            "the corpus. If a technical detail is missing, use [NEEDS INPUT] rather than guessing."
         ),
     },
     "report": {
-        "keywords": {"status", "incident", "release-notes", "change-request", "report", "post-mortem", "summary"},
+        "keywords": {
+            "status", "incident", "release-notes", "change-request", "report", "post-mortem",
+            "summary", "meeting", "notes", "brief",
+        },
         "overrides": {"temperature": 0.2, "citation_required": True},
         "hint": (
             "REPORT / ANALYSIS SKILL: Set temperature: 0.2 and citation_required: true in frontmatter. "
-            "Lead every section with the most important finding or metric, not background. "
-            "Quantify wherever possible — prefer '3 of 5 milestones complete' over 'most milestones on track'. "
-            "Separate facts (from corpus) from analysis (your synthesis) and label each clearly."
+            "Reports must lead with conclusions, not context. In Output Structure: open every section with the "
+            "single most important finding or metric, then provide supporting detail. Include a summary table or "
+            "dashboard section at the top with key metrics. Use tables for any data with 3+ comparable items. "
+            "In Rules: quantify wherever possible — '3 of 5 milestones complete (60%)' not 'most milestones on "
+            "track'. Separate observed facts (from corpus or user input) from analysis (your synthesis) and "
+            "label each. When reporting status, use a consistent rating system (e.g. On Track / At Risk / "
+            "Blocked) defined in the skill, not ad-hoc adjectives. For incident reports: include a timeline of "
+            "events, root cause, impact assessment with quantified blast radius, and action items with owners. "
+            "In Boundaries: never editorialize or assign blame in incident reports; never round or approximate "
+            "a number from a source document."
         ),
     },
     "communication": {
         "keywords": {"email", "letter", "memo", "message", "announcement", "newsletter", "marketing", "drafter"},
         "overrides": {"temperature": 0.5},
         "hint": (
-            "COMMUNICATION SKILL: Set temperature: 0.5 in frontmatter to allow natural phrasing variation. "
-            "Match tone to the stated audience — executive, customer, technical team. "
-            "Keep paragraphs to 3 sentences max. Open with the ask or key information, not pleasantries. "
-            "If the corpus contains brand voice guidelines or templates, follow them exactly."
+            "COMMUNICATION SKILL: Set temperature: 0.5 in frontmatter — higher temperature produces more "
+            "natural language variation, which is appropriate for human-to-human communication. In Output "
+            "Structure: open with the single most important point or ask — never open with pleasantries or "
+            "background. Keep paragraphs to 3 sentences maximum. End with a clear, specific call to action "
+            "('Reply by Friday with your approval' not 'Let me know your thoughts'). In Rules: match the "
+            "formality level to the stated audience — use contractions for peers, avoid them for executives or "
+            "external clients. If the corpus contains brand voice guidelines, communication templates, or "
+            "signature blocks, follow them exactly. In Boundaries: never include confidential information "
+            "unless the user explicitly requests it; never use filler phrases ('I hope this email finds you "
+            "well', 'Please do not hesitate to contact me'); never generate a subject line longer than 60 "
+            "characters."
         ),
     },
     "training": {
-        "keywords": {"training", "onboarding", "guide", "tutorial", "knowledge-base", "lesson", "curriculum"},
+        "keywords": {
+            "training", "onboarding", "guide", "tutorial", "knowledge-base", "knowledge base",
+            "lesson", "curriculum", "handbook",
+        },
         "overrides": {"temperature": 0.3, "citation_required": True},
         "hint": (
             "TRAINING / EDUCATION SKILL: Set temperature: 0.3 and citation_required: true in frontmatter. "
-            "Structure content as numbered steps with one action per step. Include concrete examples "
-            "for every abstract concept. Add a 'Common Mistakes' or 'Troubleshooting' section. "
-            "Verify that procedures match the current corpus documentation before including them."
+            "Training materials must be accurate AND approachable. In Output Structure: start with learning "
+            "objectives stating what the reader will be able to DO after completing the material (not what they "
+            "will 'understand'). Structure procedures as numbered steps with exactly one action per step. "
+            "Include a concrete example for every abstract concept. Add a 'Common Mistakes' section listing the "
+            "3-5 most frequent errors and how to avoid them. End with a knowledge check (quiz questions or "
+            "practical exercises). In Rules: every procedure must match the current corpus documentation — if "
+            "the corpus describes a process, use those exact steps and screenshots rather than inventing a "
+            "generic version. Use progressive complexity — introduce the simplest case first, then edge cases. "
+            "In Boundaries: never skip steps to save space; never assume prior knowledge unless stated in "
+            "prerequisites; never use jargon without defining it on first use."
         ),
     },
 }
@@ -608,7 +670,7 @@ def _detect_skill_category(name: str, goal: str) -> str | None:
     """Match a skill to a category by checking name and goal against keyword sets."""
     text = f"{name} {goal}".lower()
     for category, config in _CATEGORY_CONFIGS.items():
-        if any(kw in text for kw in config["keywords"]):
+        if any(re.search(r"\b" + re.escape(kw) + r"\b", text) for kw in config["keywords"]):
             return category
     return None
 

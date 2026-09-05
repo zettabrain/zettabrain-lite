@@ -743,6 +743,54 @@ async function loadSkills() {
   }
 }
 
+async function loadTemplates() {
+  try {
+    const r = await fetch('/api/skills/templates');
+    const data = await r.json();
+    const templates = data.templates || [];
+    const list = document.getElementById('templates-list');
+    if (!list) return;
+
+    if (templates.length === 0) {
+      list.innerHTML = '<p style="color:var(--text3);">No templates available.</p>';
+      return;
+    }
+
+    list.innerHTML = templates.map(t => `
+      <div class="skills-list-item">
+        <div style="flex:1; min-width:0;">
+          <h4>${t.name}</h4>
+          <p>${t.description || 'No description'}</p>
+          <div class="skill-tags">
+            ${(t.tags || []).map(tag => `<span class="skill-tag">${tag}</span>`).join('')}
+          </div>
+        </div>
+        <div class="skill-actions">
+          ${t.enabled
+            ? '<span style="color:var(--text3); font-size:12px;">Added</span>'
+            : `<button class="btn btn-primary btn-sm" onclick="enableTemplate('${t.name.replace(/'/g, "\\'")}')">Add to My Skills</button>`
+          }
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {
+    console.error('Failed to load templates', e);
+  }
+}
+
+async function enableTemplate(name) {
+  try {
+    const r = await fetch(`/api/skills/templates/${encodeURIComponent(name)}/enable`, { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Failed to add template');
+    toast(`"${name}" added to your skills`, 'success');
+    loadSkills();
+    loadTemplates();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
 function selectSkillFromSidebar(name) {
   if (selectedSkill === name) {
     selectedSkill = null;
@@ -1172,7 +1220,7 @@ function switchTab(tab) {
     if (btn) btn.classList.toggle('active', t === tab);
   });
 
-  if (tab === 'skills') loadSkills();
+  if (tab === 'skills') { loadSkills(); loadTemplates(); }
   if (tab === 'storage') loadStorage();
   if (tab === 'settings') { loadSettings(); loadModels(); }
   if (tab === 'ingest') refreshStatus();

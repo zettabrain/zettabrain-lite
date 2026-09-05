@@ -236,7 +236,7 @@
       <div class="panel-content">
         <div class="panel-section">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <h3>Skills Management</h3>
+            <h3>My Skills</h3>
             <div style="display:flex; gap:8px;">
               <button class="btn btn-primary btn-sm" onclick="openSkillWizard()">Create Skill</button>
               <button class="btn btn-ghost btn-sm" onclick="showUploadSkillModal()">Upload Skill</button>
@@ -246,6 +246,15 @@
             Create or upload skills for document generation. Select a skill from the dropdown in the Chat tab to use it.
           </p>
           <div id="skills-list"></div>
+        </div>
+        <div class="panel-section" style="margin-top:24px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <h3>Skill Templates</h3>
+          </div>
+          <p style="color:var(--text2); font-size:13px; margin-bottom:16px;">
+            Pre-built skills you can add to your collection. Enable a template to start using it.
+          </p>
+          <div id="templates-list"></div>
         </div>
       </div>
     </div>

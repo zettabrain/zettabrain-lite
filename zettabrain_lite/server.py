@@ -1147,35 +1147,86 @@ _BUILTIN_SKILLS_DIR = PKG_DIR / "skills"
 async def list_skills():
     from .generation.skill_parser import SkillParser
 
-    seen_names = set()
     skills = []
-
-    for skills_dir in [SKILLS_DIR, _BUILTIN_SKILLS_DIR]:
-        if not skills_dir.exists():
-            continue
-        source = "user" if skills_dir == SKILLS_DIR else "builtin"
-        for f in sorted(skills_dir.glob("*.md")):
+    if SKILLS_DIR.exists():
+        for f in sorted(SKILLS_DIR.glob("*.md")):
             try:
                 skill = SkillParser.parse_file(f)
-                if skill.name not in seen_names:
-                    seen_names.add(skill.name)
-                    skills.append(
-                        {
-                            "name": skill.name,
-                            "version": skill.version,
-                            "description": skill.description,
-                            "business_type": skill.business_type,
-                            "requires_corpus": skill.requires_corpus,
-                            "tags": skill.tags,
-                            "source": source,
-                            "temperature": skill.temperature,
-                            "max_tokens": skill.max_tokens,
-                        }
-                    )
+                skills.append(
+                    {
+                        "name": skill.name,
+                        "version": skill.version,
+                        "description": skill.description,
+                        "business_type": skill.business_type,
+                        "requires_corpus": skill.requires_corpus,
+                        "tags": skill.tags,
+                        "source": "user",
+                        "temperature": skill.temperature,
+                        "max_tokens": skill.max_tokens,
+                    }
+                )
             except Exception:
                 continue
 
     return {"skills": skills}
+
+
+@app.get("/api/skills/templates")
+async def list_skill_templates():
+    from .generation.skill_parser import SkillParser
+
+    templates = []
+    if _BUILTIN_SKILLS_DIR.exists():
+        user_names = set()
+        if SKILLS_DIR.exists():
+            for f in SKILLS_DIR.glob("*.md"):
+                try:
+                    user_names.add(SkillParser.parse_file(f).name)
+                except Exception:
+                    continue
+
+        for f in sorted(_BUILTIN_SKILLS_DIR.glob("*.md")):
+            try:
+                skill = SkillParser.parse_file(f)
+                templates.append(
+                    {
+                        "name": skill.name,
+                        "version": skill.version,
+                        "description": skill.description,
+                        "business_type": skill.business_type,
+                        "tags": skill.tags,
+                        "enabled": skill.name in user_names,
+                    }
+                )
+            except Exception:
+                continue
+
+    return {"templates": templates}
+
+
+@app.post("/api/skills/templates/{template_name}/enable")
+async def enable_skill_template(template_name: str):
+    from .generation.skill_parser import SkillParser
+
+    if not _BUILTIN_SKILLS_DIR.exists():
+        raise HTTPException(status_code=404, detail="No templates available")
+
+    for f in _BUILTIN_SKILLS_DIR.glob("*.md"):
+        try:
+            skill = SkillParser.parse_file(f)
+            if skill.name == template_name:
+                SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+                dest = SKILLS_DIR / f.name
+                if dest.exists():
+                    raise HTTPException(status_code=409, detail=f"Skill '{template_name}' already exists in your skills")
+                shutil.copy2(f, dest)
+                return {"message": f"Template '{template_name}' added to your skills"}
+        except HTTPException:
+            raise
+        except Exception:
+            continue
+
+    raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
 
 
 @app.post("/api/generate")
@@ -1386,10 +1437,8 @@ async def upload_skill(body: SkillUploadBody):
 async def delete_skill(skill_name: str):
     from .generation.skill_parser import SkillParser
 
-    for skills_dir in [SKILLS_DIR, _BUILTIN_SKILLS_DIR]:
-        if not skills_dir.exists():
-            continue
-        for f in skills_dir.glob("*.md"):
+    if SKILLS_DIR.exists():
+        for f in SKILLS_DIR.glob("*.md"):
             try:
                 skill = SkillParser.parse_file(f)
                 if skill.name == skill_name:

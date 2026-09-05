@@ -537,15 +537,91 @@ def _to_slug(name: str) -> str:
     return slug.strip("-")
 
 
-def _force_pricing_frontmatter(content: str) -> str:
-    """Programmatically set deterministic: true and temperature: 0.0 on pricing skills."""
+_CATEGORY_CONFIGS: dict[str, dict] = {
+    "pricing": {
+        "keywords": {"quote", "invoice", "pricing", "price", "billing", "estimate", "rate", "bid", "cost estimate"},
+        "overrides": {"deterministic": True, "temperature": 0.0, "citation_required": True},
+        "hint": (
+            "PRICING SKILL: Set temperature: 0.0, deterministic: true, and citation_required: true in frontmatter. "
+            "The deterministic flag enables the Extract-Compute-Format pipeline which uses Python for all arithmetic "
+            "instead of relying on the LLM to calculate totals. Every rate and fee must cite the corpus source."
+        ),
+    },
+    "compliance": {
+        "keywords": {"compliance", "audit", "regulatory", "legal", "contract", "risk", "security", "assessment"},
+        "overrides": {"temperature": 0.1, "citation_required": True},
+        "hint": (
+            "COMPLIANCE / LEGAL SKILL: Set temperature: 0.1 and citation_required: true in frontmatter. "
+            "Every finding must cite the specific regulation, policy, or control requirement from the corpus. "
+            "Never state compliance status without evidence. Use precise, unambiguous language — 'compliant' "
+            "and 'non-compliant' require cited proof. Include an abstention rule if the corpus lacks the "
+            "relevant standards."
+        ),
+    },
+    "technical": {
+        "keywords": {
+            "api", "documentation", "runbook", "sop", "data-dictionary", "architecture",
+            "technical", "specification", "system design",
+        },
+        "overrides": {"temperature": 0.1, "citation_required": True},
+        "hint": (
+            "TECHNICAL SKILL: Set temperature: 0.1 and citation_required: true in frontmatter. "
+            "Steps must be in executable order. Code examples must be syntactically correct. "
+            "Reference exact file paths, command names, and configuration keys from the corpus — "
+            "never paraphrase a technical identifier. Include version numbers when the corpus provides them."
+        ),
+    },
+    "report": {
+        "keywords": {"status", "incident", "release-notes", "change-request", "report", "post-mortem", "summary"},
+        "overrides": {"temperature": 0.2, "citation_required": True},
+        "hint": (
+            "REPORT / ANALYSIS SKILL: Set temperature: 0.2 and citation_required: true in frontmatter. "
+            "Lead every section with the most important finding or metric, not background. "
+            "Quantify wherever possible — prefer '3 of 5 milestones complete' over 'most milestones on track'. "
+            "Separate facts (from corpus) from analysis (your synthesis) and label each clearly."
+        ),
+    },
+    "communication": {
+        "keywords": {"email", "letter", "memo", "message", "announcement", "newsletter", "marketing", "drafter"},
+        "overrides": {"temperature": 0.5},
+        "hint": (
+            "COMMUNICATION SKILL: Set temperature: 0.5 in frontmatter to allow natural phrasing variation. "
+            "Match tone to the stated audience — executive, customer, technical team. "
+            "Keep paragraphs to 3 sentences max. Open with the ask or key information, not pleasantries. "
+            "If the corpus contains brand voice guidelines or templates, follow them exactly."
+        ),
+    },
+    "training": {
+        "keywords": {"training", "onboarding", "guide", "tutorial", "knowledge-base", "lesson", "curriculum"},
+        "overrides": {"temperature": 0.3, "citation_required": True},
+        "hint": (
+            "TRAINING / EDUCATION SKILL: Set temperature: 0.3 and citation_required: true in frontmatter. "
+            "Structure content as numbered steps with one action per step. Include concrete examples "
+            "for every abstract concept. Add a 'Common Mistakes' or 'Troubleshooting' section. "
+            "Verify that procedures match the current corpus documentation before including them."
+        ),
+    },
+}
+
+
+def _detect_skill_category(name: str, goal: str) -> str | None:
+    """Match a skill to a category by checking name and goal against keyword sets."""
+    text = f"{name} {goal}".lower()
+    for category, config in _CATEGORY_CONFIGS.items():
+        if any(kw in text for kw in config["keywords"]):
+            return category
+    return None
+
+
+def _force_frontmatter_overrides(content: str, overrides: dict) -> str:
+    """Programmatically set frontmatter values after LLM generation."""
     try:
         post = frontmatter.loads(content)
-        post.metadata["deterministic"] = True
-        post.metadata["temperature"] = 0.0
+        for key, value in overrides.items():
+            post.metadata[key] = value
         return frontmatter.dumps(post)
     except Exception:
-        log.debug("Could not patch pricing frontmatter", exc_info=True)
+        log.debug("Could not patch frontmatter overrides", exc_info=True)
         return content
 
 
@@ -573,17 +649,12 @@ def generate_skill_draft(
     if len(description) < 120:
         description += " Retrieve relevant corpus documents and apply organizational rules."
 
-    _pricing_keywords = {"quote", "invoice", "pricing", "price", "billing", "estimate", "rate"}
-    name_lower = display_name.lower()
-    is_pricing = any(kw in name_lower for kw in _pricing_keywords)
+    category = _detect_skill_category(display_name, goal)
+    category_config = _CATEGORY_CONFIGS.get(category) if category else None
 
     extra_instructions = []
-    if is_pricing:
-        extra_instructions.append(
-            "PRICING SKILL: This is a pricing/quoting skill. Set temperature: 0.0 and deterministic: true in frontmatter. "
-            "The deterministic flag enables the Extract-Compute-Format pipeline which uses Python for all arithmetic "
-            "instead of relying on the LLM to calculate totals."
-        )
+    if category_config:
+        extra_instructions.append(category_config["hint"])
     if source_documents:
         doc_list = "\n".join(f"  - {d}" for d in source_documents)
         extra_instructions.append(
@@ -626,8 +697,8 @@ def generate_skill_draft(
         except Exception:
             log.debug("Repair attempt failed", exc_info=True)
 
-    if is_pricing:
-        content = _force_pricing_frontmatter(content)
+    if category_config:
+        content = _force_frontmatter_overrides(content, category_config["overrides"])
 
     return {
         "content": content,

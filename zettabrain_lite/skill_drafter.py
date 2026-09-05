@@ -537,6 +537,18 @@ def _to_slug(name: str) -> str:
     return slug.strip("-")
 
 
+def _force_pricing_frontmatter(content: str) -> str:
+    """Programmatically set deterministic: true and temperature: 0.0 on pricing skills."""
+    try:
+        post = frontmatter.loads(content)
+        post.metadata["deterministic"] = True
+        post.metadata["temperature"] = 0.0
+        return frontmatter.dumps(post)
+    except Exception:
+        log.debug("Could not patch pricing frontmatter", exc_info=True)
+        return content
+
+
 def generate_skill_draft(
     llm_fn: Callable[[str], str],
     goal: str,
@@ -613,6 +625,9 @@ def generate_skill_draft(
             quality = validate_skill(content)
         except Exception:
             log.debug("Repair attempt failed", exc_info=True)
+
+    if is_pricing:
+        content = _force_pricing_frontmatter(content)
 
     return {
         "content": content,

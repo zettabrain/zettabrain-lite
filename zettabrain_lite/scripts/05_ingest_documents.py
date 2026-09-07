@@ -10,6 +10,7 @@ Usage:
     python 05_ingest_documents.py --file /mnt/Rag-data/report.pdf
     python 05_ingest_documents.py --stats                # show what's ingested
     python 05_ingest_documents.py --clear                # wipe the vector store
+    python 05_ingest_documents.py --rebuild              # force re-ingest all files
 """
 
 from __future__ import annotations
@@ -515,6 +516,7 @@ def main():
     parser.add_argument("--file", default=None, help="Ingest a single file")
     parser.add_argument("--clear", action="store_true", help="Clear the entire vector store")
     parser.add_argument("--stats", action="store_true", help="Show vector store statistics")
+    parser.add_argument("--rebuild", action="store_true", help="Force re-ingestion of all files (clears hash cache)")
     args = parser.parse_args()
 
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -549,6 +551,10 @@ def main():
 
     # ---- Ingest ----
     hash_cache = load_hash_cache()
+    if args.rebuild:
+        hash_cache = {}
+        save_hash_cache(hash_cache)
+        print("Rebuild mode: hash cache cleared, all files will be re-ingested.")
     ingested = 0
 
     if args.file:

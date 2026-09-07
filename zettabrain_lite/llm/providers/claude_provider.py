@@ -26,6 +26,7 @@ class ClaudeProvider(LLMProvider):
         message = client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
+            temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
         )
         return message.content[0].text
@@ -37,6 +38,7 @@ class ClaudeProvider(LLMProvider):
         with client.messages.stream(
             model=self.model,
             max_tokens=max_tokens,
+            temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
             for text in stream.text_stream:

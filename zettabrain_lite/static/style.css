@@ -241,6 +241,7 @@
   .type-smb { background: rgba(59,130,246,0.15); color: var(--accent); }
   .type-s3 { background: rgba(245,158,11,0.15); color: var(--yellow); }
   .type-local { background: rgba(99,102,241,0.15); color: var(--accent2); }
+  .type-onedrive { background: rgba(0,120,212,0.15); color: #0078d4; }
 
   /* ── Source modal ─────────────────────────────── */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
@@ -379,6 +380,9 @@
   .user-avatar-placeholder { width: 32px; height: 32px; border-radius: 50%; background: var(--accent2); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; font-weight: 600; }
   .user-name { font-size: 13px; color: var(--text); font-weight: 500; }
   .user-email { font-size: 11px; color: var(--text3); }
+
+  .provider-fields { margin-top: 12px; padding: 14px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; }
+  .provider-status { font-size: 12px; margin-top: 8px; }
 
   @media (max-width: 768px) {
     .sidebar { display: none; }

@@ -32,6 +32,16 @@ class GeminiProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
+    def _friendly_error(self, e: "httpx.HTTPStatusError") -> str:
+        status = e.response.status_code
+        if status == 401:
+            return "Your Gemini API key appears to be invalid. Check it in Settings."
+        elif status == 429:
+            return "Gemini is temporarily busy. Wait a moment and try again, or switch to a different model."
+        elif status == 404:
+            return f"Model '{self.model}' was not found on Gemini. Check the model name in Settings."
+        return f"Could not reach Gemini (error {status}). Check your API key and internet connection."
+
     def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
@@ -50,13 +60,9 @@ class GeminiProvider(LLMProvider):
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"]
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise RuntimeError("Invalid Google API key")
-            elif e.response.status_code == 429:
-                raise RuntimeError("Gemini rate limit exceeded. Try again later or use a local model.")
-            raise RuntimeError(f"Gemini API error: {e.response.text[:300]}")
+            raise RuntimeError(self._friendly_error(e))
         except httpx.TimeoutException:
-            raise RuntimeError(f"Gemini request timed out after {self.timeout}s")
+            raise RuntimeError("Gemini took too long to respond. Try again, or switch to a different model.")
 
     def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         payload = {
@@ -86,9 +92,9 @@ class GeminiProvider(LLMProvider):
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 continue
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Gemini streaming error: {e.response.text[:300]}")
-        except Exception as e:
-            raise RuntimeError(f"Gemini streaming failed: {e}")
+            raise RuntimeError(self._friendly_error(e))
+        except Exception:
+            raise RuntimeError("Could not connect to Gemini. Check your internet connection and try again.")
 
     def check_health(self) -> bool:
         try:

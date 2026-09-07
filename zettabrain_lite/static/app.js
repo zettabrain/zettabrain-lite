@@ -34,91 +34,97 @@ let currentMsgId = null;
 let selectedSkill = null;
 
 // ── Auth ─────────────────────────────────────────────
+let authMode = 'register';
+let authToken = localStorage.getItem('zb_token');
+
+function authHeaders(extra) {
+  const h = Object.assign({'Content-Type': 'application/json'}, extra || {});
+  if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+  return h;
+}
+
 function checkAuth() {
-  const user = localStorage.getItem('zb_user');
-  if (user) {
-    document.getElementById('signin-overlay').style.display = 'none';
-    showUserInfo(JSON.parse(user));
-  } else {
-    initGoogleSignIn();
-  }
-}
-
-async function initGoogleSignIn() {
-  try {
-    const r = await fetch('/api/settings');
-    const data = await r.json();
-    const clientId = (data.settings || {}).google_client_id;
-
-    if (clientId && window.google) {
-      google.accounts.id.initialize({
-        client_id: clientId,
-        callback: handleGoogleSignIn,
+  if (authToken) {
+    fetch('/api/auth/me', { headers: { 'Authorization': 'Bearer ' + authToken } })
+      .then(r => {
+        if (r.ok) return r.json();
+        throw new Error('expired');
+      })
+      .then(data => {
+        document.getElementById('signin-overlay').style.display = 'none';
+        showUserInfo({ name: data.username });
+      })
+      .catch(() => {
+        authToken = null;
+        localStorage.removeItem('zb_token');
+        document.getElementById('signin-overlay').style.display = 'flex';
       });
-      google.accounts.id.renderButton(
-        document.getElementById('google-signin-btn'),
-        { theme: 'filled_black', size: 'large', shape: 'pill', text: 'sign_in_with', width: 300 }
-      );
-    } else {
-      const gBtn = document.getElementById('google-signin-btn');
-      if (gBtn) gBtn.style.display = 'none';
-      const divider = document.getElementById('signin-divider');
-      if (divider) divider.style.display = 'none';
-    }
-  } catch(e) {
-    console.error('Failed to init Google Sign-In', e);
-    const gBtn = document.getElementById('google-signin-btn');
-    if (gBtn) gBtn.style.display = 'none';
-    const divider = document.getElementById('signin-divider');
-    if (divider) divider.style.display = 'none';
+  } else {
+    document.getElementById('signin-overlay').style.display = 'flex';
   }
 }
 
-function handleGoogleSignIn(response) {
-  const payload = JSON.parse(atob(response.credential.split('.')[1]));
-  const user = {
-    name: payload.name,
-    email: payload.email,
-    picture: payload.picture,
-    given_name: payload.given_name,
-  };
-  localStorage.setItem('zb_user', JSON.stringify(user));
-  document.getElementById('signin-overlay').style.display = 'none';
-  showUserInfo(user);
+function toggleAuthMode() {
+  authMode = authMode === 'register' ? 'login' : 'register';
+  document.getElementById('auth-submit-btn').textContent =
+    authMode === 'register' ? 'Create Account' : 'Log In';
+  document.getElementById('auth-toggle-btn').textContent =
+    authMode === 'register' ? 'Already have an account? Log in' : 'Need an account? Register';
+  document.getElementById('auth-username').placeholder =
+    authMode === 'register' ? 'Choose a username' : 'Username';
+  document.getElementById('auth-password').placeholder =
+    authMode === 'register' ? 'Choose a password' : 'Password';
+  document.getElementById('auth-error').style.display = 'none';
 }
 
-function continueWithoutSignIn() {
-  localStorage.setItem('zb_user', JSON.stringify({ name: 'Guest', email: '' }));
-  document.getElementById('signin-overlay').style.display = 'none';
-  showUserInfo({ name: 'Guest' });
+async function submitAuth() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errEl = document.getElementById('auth-error');
+  errEl.style.display = 'none';
+
+  if (!username || !password) {
+    errEl.textContent = 'Please enter a username and password.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+  try {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ username, password })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Authentication failed.');
+    authToken = data.token;
+    localStorage.setItem('zb_token', authToken);
+    document.getElementById('signin-overlay').style.display = 'none';
+    showUserInfo({ name: data.username });
+    connectWS();
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  }
 }
 
 function showUserInfo(user) {
   const container = document.getElementById('user-info');
   if (!container) return;
-
-  if (user.picture) {
-    container.innerHTML = `
-      <img class="user-avatar" src="${user.picture}" referrerpolicy="no-referrer">
-      <div style="flex:1;min-width:0;">
-        <div class="user-name">${user.name}</div>
-        ${user.email ? `<div class="user-email">${user.email}</div>` : ''}
-      </div>
-      ${user.email ? '<button class="btn btn-ghost btn-sm" onclick="signOut()" style="flex-shrink:0;">Sign out</button>' : ''}
-    `;
-  } else {
-    const initial = (user.name || 'G')[0].toUpperCase();
-    container.innerHTML = `
-      <div class="user-avatar-placeholder">${initial}</div>
-      <div style="flex:1;min-width:0;">
-        <div class="user-name">${user.name}</div>
-      </div>
-    `;
-  }
+  const initial = (user.name || 'U')[0].toUpperCase();
+  container.innerHTML = `
+    <div class="user-avatar-placeholder">${initial}</div>
+    <div style="flex:1;min-width:0;">
+      <div class="user-name">${user.name}</div>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="signOut()" style="flex-shrink:0;">Sign out</button>
+  `;
 }
 
 function signOut() {
-  localStorage.removeItem('zb_user');
+  authToken = null;
+  localStorage.removeItem('zb_token');
   location.reload();
 }
 
@@ -137,8 +143,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── WebSocket ─────────────────────────────────────────
 function connectWS() {
+  if (!authToken) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/chat`);
+  const tokenParam = authToken ? '?token=' + encodeURIComponent(authToken) : '';
+  ws = new WebSocket(`${proto}://${location.host}/ws/chat${tokenParam}`);
   ws.onmessage = (e) => handleWSMessage(JSON.parse(e.data));
   ws.onclose = () => setTimeout(connectWS, 3000);
   ws.onerror = () => ws.close();
@@ -277,7 +285,7 @@ async function sendMessage() {
     try {
       const r = await fetch('/api/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           input: question,
           skill_name: selectedSkill,
@@ -340,7 +348,7 @@ async function sendMessage() {
     try {
       const r = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ question, model: currentModel })
       });
       const data = await r.json();
@@ -492,7 +500,7 @@ async function runIngest() {
   try {
     const r = await fetch('/api/ingest', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ folder, rebuild })
     });
     const data = await r.json();
@@ -521,7 +529,7 @@ async function runIngest() {
 async function clearVectorStore() {
   if (!confirm('Clear the entire vector store? You will need to re-ingest.')) return;
   try {
-    const r = await fetch('/api/vectorstore', { method: 'DELETE' });
+    const r = await fetch('/api/vectorstore', { method: 'DELETE', headers: authHeaders() });
     const data = await r.json();
     toast(data.message, 'success');
     refreshStatus();
@@ -598,6 +606,9 @@ async function addStorage() {
     if (!body.bucket || !body.mount_point) {
       toast('Bucket and Mount Point are required', 'error'); return;
     }
+  } else if (type === 'onedrive') {
+    toast('Use the "Connect OneDrive" and "Sync Files" buttons above', 'info');
+    return;
   }
 
   const resultEl = document.getElementById('storage-result');
@@ -607,7 +618,7 @@ async function addStorage() {
   try {
     const r = await fetch('/api/storage', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(body)
     });
     const data = await r.json();
@@ -638,6 +649,11 @@ async function testStorage() {
     body.server_ip = document.getElementById('storage-nfs-ip').value.trim();
   } else if (type === 'smb') {
     body.server_ip = document.getElementById('storage-smb-ip').value.trim();
+  } else if (type === 'onedrive') {
+    const resultEl = document.getElementById('storage-result');
+    resultEl.textContent = 'Use "Connect OneDrive" to test the connection.';
+    resultEl.style.color = 'var(--text2)';
+    return;
   }
 
   const resultEl = document.getElementById('storage-result');
@@ -647,7 +663,7 @@ async function testStorage() {
   try {
     const r = await fetch('/api/storage/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(body)
     });
     const data = await r.json();
@@ -662,12 +678,84 @@ async function testStorage() {
 async function removeStorage(index) {
   if (!confirm('Remove this storage source?')) return;
   try {
-    await fetch(`/api/storage/${index}`, { method: 'DELETE' });
+    await fetch(`/api/storage/${index}`, { method: 'DELETE', headers: authHeaders() });
     toast('Storage source removed', 'success');
     loadStorage();
     refreshStatus();
   } catch(e) {
     toast('Failed to remove', 'error');
+  }
+}
+
+// ── OneDrive ─────────────────────────────────────────
+async function connectOneDrive() {
+  const clientId = document.getElementById('storage-onedrive-client-id').value.trim();
+  const tenantId = document.getElementById('storage-onedrive-tenant').value.trim() || 'common';
+  const statusEl = document.getElementById('onedrive-auth-status');
+
+  if (!clientId) { toast('App (Client) ID is required', 'error'); return; }
+
+  statusEl.textContent = 'Starting device login...';
+  statusEl.style.color = 'var(--text2)';
+
+  try {
+    const r = await fetch('/api/onedrive/connect', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ client_id: clientId, tenant_id: tenantId })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Connection failed');
+
+    statusEl.innerHTML =
+      '<div style="background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:14px; margin:8px 0;">' +
+      '<p style="margin-bottom:8px;">To sign in, open your browser and go to:</p>' +
+      '<p><a href="' + data.verification_uri + '" target="_blank" style="color:var(--accent); font-weight:600;">' + data.verification_uri + '</a></p>' +
+      '<p style="margin-top:8px;">Enter this code: <strong style="font-size:18px; letter-spacing:2px; color:var(--accent);">' + data.user_code + '</strong></p>' +
+      '<p style="margin-top:8px; font-size:11px; color:var(--text3);">Waiting for you to complete sign-in...</p>' +
+      '</div>';
+
+    const cr = await fetch('/api/onedrive/complete', {
+      method: 'POST',
+      headers: authHeaders()
+    });
+    const cd = await cr.json();
+    if (!cr.ok) throw new Error(cd.detail || 'Login failed');
+
+    statusEl.innerHTML = '<span style="color:var(--green);">&#9679; Connected to OneDrive</span>';
+    document.getElementById('onedrive-sync-btn').style.display = 'inline-flex';
+    toast('Connected to OneDrive!', 'success');
+  } catch(e) {
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--red)';
+    toast('OneDrive connection failed', 'error');
+  }
+}
+
+async function syncOneDrive() {
+  const folder = document.getElementById('storage-onedrive-folder').value.trim() || '/';
+  const statusEl = document.getElementById('onedrive-auth-status');
+
+  statusEl.textContent = 'Downloading files from OneDrive...';
+  statusEl.style.color = 'var(--text2)';
+
+  try {
+    const r = await fetch('/api/onedrive/sync', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ folder })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Sync failed');
+
+    statusEl.innerHTML = '<span style="color:var(--green);">&#9679; ' + data.message + '</span>';
+    toast(data.message, 'success');
+    loadStorage();
+    refreshStatus();
+  } catch(e) {
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--red)';
+    toast('Sync failed', 'error');
   }
 }
 
@@ -780,7 +868,7 @@ async function loadTemplates() {
 
 async function enableTemplate(name) {
   try {
-    const r = await fetch(`/api/skills/templates/${encodeURIComponent(name)}/enable`, { method: 'POST' });
+    const r = await fetch(`/api/skills/templates/${encodeURIComponent(name)}/enable`, { method: 'POST', headers: authHeaders() });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Failed to add template');
     toast(`"${name}" added to your skills`, 'success');
@@ -806,7 +894,7 @@ function selectSkillFromSidebar(name) {
 async function deleteSkill(name) {
   if (!confirm(`Delete skill "${name}"?`)) return;
   try {
-    const r = await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const r = await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE', headers: authHeaders() });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Delete failed');
     toast(`Skill "${name}" deleted`, 'success');
@@ -996,8 +1084,11 @@ async function uploadLogo(event) {
   formData.append('logo', file);
 
   try {
+    const logoHeaders = {};
+    if (authToken) logoHeaders['Authorization'] = 'Bearer ' + authToken;
     const r = await fetch('/api/settings/logo', {
       method: 'POST',
+      headers: logoHeaders,
       body: formData,
     });
     const data = await r.json();
@@ -1065,7 +1156,7 @@ async function uploadSkill() {
   try {
     const r = await fetch('/api/skills/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ filename, content })
     });
     const data = await r.json();
@@ -1080,6 +1171,46 @@ async function uploadSkill() {
 }
 
 // ── Settings ──────────────────────────────────────────
+const PROVIDER_CONFIG = {
+  gemini:    { keyField: 'gemini_api_key',    modelField: 'gemini_model',    label: 'Gemini' },
+  groq:      { keyField: 'groq_api_key',      modelField: 'groq_model',      label: 'Groq' },
+  openai:    { keyField: 'openai_api_key',    modelField: 'openai_model',    label: 'OpenAI' },
+  anthropic: { keyField: 'anthropic_api_key', modelField: 'claude_model',    label: 'Anthropic' },
+  together:  { keyField: 'together_api_key',  modelField: 'together_model',  label: 'Together AI' },
+  cerebras:  { keyField: 'cerebras_api_key',  modelField: 'cerebras_model',  label: 'Cerebras' },
+  openrouter:{ keyField: 'openrouter_api_key',modelField: 'openrouter_model',label: 'OpenRouter' },
+  fireworks: { keyField: 'fireworks_api_key', modelField: 'fireworks_model', label: 'Fireworks' },
+};
+
+function showProviderFields() {
+  document.querySelectorAll('.provider-fields').forEach(el => el.style.display = 'none');
+  const provider = document.getElementById('cloud-provider-select').value;
+  if (provider) {
+    const fields = document.getElementById('provider-fields-' + provider);
+    if (fields) fields.style.display = 'block';
+  }
+}
+
+function updateProviderStatusSummary(cfg) {
+  const configured = [];
+  for (const [p, info] of Object.entries(PROVIDER_CONFIG)) {
+    const hasKey = cfg[info.keyField] && cfg[info.keyField] !== '';
+    const statusEl = document.getElementById('status-' + p);
+    if (statusEl) {
+      statusEl.innerHTML = hasKey
+        ? '<span style="color:var(--green);">&#9679; Configured</span>'
+        : '<span style="color:var(--text3);">Not configured</span>';
+    }
+    if (hasKey) configured.push(info.label);
+  }
+  const summary = document.getElementById('provider-status-summary');
+  if (summary) {
+    summary.innerHTML = configured.length
+      ? '<span style="color:var(--green);">&#9679;</span> ' + configured.join(', ')
+      : '<span style="color:var(--text3);">No providers configured</span>';
+  }
+}
+
 async function loadSettings() {
   try {
     const r = await fetch('/api/settings');
@@ -1089,6 +1220,7 @@ async function loadSettings() {
     document.getElementById('set-org-name').value = cfg.org_name || '';
     document.getElementById('set-ollama-host').value = cfg.ollama_host || '';
     document.getElementById('set-embed-model').value = cfg.embed_model || '';
+
     document.getElementById('set-gemini-key').value = cfg.gemini_api_key || '';
     document.getElementById('set-groq-key').value = cfg.groq_api_key || '';
     document.getElementById('set-openai-key').value = cfg.openai_api_key || '';
@@ -1097,7 +1229,17 @@ async function loadSettings() {
     document.getElementById('set-cerebras-key').value = cfg.cerebras_api_key || '';
     document.getElementById('set-openrouter-key').value = cfg.openrouter_api_key || '';
     document.getElementById('set-fireworks-key').value = cfg.fireworks_api_key || '';
-    document.getElementById('set-google-client-id').value = cfg.google_client_id || '';
+
+    document.getElementById('set-gemini-model').value = cfg.gemini_model || '';
+    document.getElementById('set-groq-model').value = cfg.groq_model || '';
+    document.getElementById('set-openai-model').value = cfg.openai_model || '';
+    document.getElementById('set-anthropic-model').value = cfg.claude_model || '';
+    document.getElementById('set-together-model').value = cfg.together_model || '';
+    document.getElementById('set-cerebras-model').value = cfg.cerebras_model || '';
+    document.getElementById('set-openrouter-model').value = cfg.openrouter_model || '';
+    document.getElementById('set-fireworks-model').value = cfg.fireworks_model || '';
+
+    updateProviderStatusSummary(cfg);
     loadLogoPreview();
   } catch(e) {
     console.error('Failed to load settings', e);
@@ -1118,24 +1260,34 @@ async function saveSettings() {
     ['set-cerebras-key', 'cerebras_api_key'],
     ['set-openrouter-key', 'openrouter_api_key'],
     ['set-fireworks-key', 'fireworks_api_key'],
-    ['set-google-client-id', 'google_client_id'],
+    ['set-gemini-model', 'gemini_model'],
+    ['set-groq-model', 'groq_model'],
+    ['set-openai-model', 'openai_model'],
+    ['set-anthropic-model', 'claude_model'],
+    ['set-together-model', 'together_model'],
+    ['set-cerebras-model', 'cerebras_model'],
+    ['set-openrouter-model', 'openrouter_model'],
+    ['set-fireworks-model', 'fireworks_model'],
   ];
 
   fields.forEach(([elId, key]) => {
-    const val = document.getElementById(elId).value.trim();
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const val = el.value.trim();
     if (val && !val.startsWith('***')) settings[key] = val;
   });
 
   try {
     const r = await fetch('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ settings })
     });
     const data = await r.json();
     if (data.success) {
       toast('Settings saved!', 'success');
       loadModels();
+      loadSettings();
     } else {
       toast('Failed to save settings', 'error');
     }
@@ -1152,7 +1304,7 @@ async function applyModel() {
   try {
     const r = await fetch('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ settings: { llm_model: modelName } })
     });
     const data = await r.json();
@@ -1182,7 +1334,7 @@ async function pullModel(type) {
   try {
     const r = await fetch('/api/pull', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ model: modelName })
     });
     if (!r.ok) throw new Error(`Server error ${r.status}`);
@@ -1574,7 +1726,7 @@ async function wizNext() {
     try {
       const r = await fetch('/api/skills/draft', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           goal: desc,
           name: name,
@@ -1968,7 +2120,7 @@ async function saveWizardSkill() {
   try {
     const r = await fetch('/api/skills/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ filename, content })
     });
     const data = await r.json();

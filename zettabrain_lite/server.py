@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -406,6 +406,46 @@ class SkillDraftBody(BaseModel):
     model: Optional[str] = None
 
 
+# ── Routes: Authentication ────────────────────────────────────────────────────
+class _AuthBody(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/register")
+async def auth_register(body: _AuthBody):
+    from .auth import create_token, register_user
+
+    user = register_user(body.username, body.password)
+    token = create_token(user.username)
+    return {"token": token, "username": user.username}
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: _AuthBody):
+    from .auth import authenticate_user, create_token
+
+    user = authenticate_user(body.username, body.password)
+    token = create_token(user.username)
+    return {"token": token, "username": user.username}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    from .auth import get_current_user
+
+    username = get_current_user(request)
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"username": username}
+
+
+def _require_auth(request: Request) -> str:
+    from .auth import require_auth
+
+    return require_auth(request)
+
+
 # ── Routes: UI ───────────────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -474,7 +514,7 @@ async def get_settings():
 
 
 @app.post("/api/settings")
-async def update_settings(body: SettingsUpdate):
+async def update_settings(body: SettingsUpdate, _user: str = Depends(_require_auth)):
     cfg = load_config()
     for k, v in body.settings.items():
         if v and not (isinstance(v, str) and v.startswith("***")):
@@ -485,7 +525,7 @@ async def update_settings(body: SettingsUpdate):
 
 
 @app.post("/api/settings/logo")
-async def upload_logo(request: Request):
+async def upload_logo(request: Request, _user: str = Depends(_require_auth)):
     """Upload organization logo (accepts multipart form or base64 JSON)."""
     content_type = request.headers.get("content-type", "")
 
@@ -584,7 +624,7 @@ def _mount_smb(
 
 
 @app.post("/api/storage")
-async def add_storage(body: StorageAddRequest):
+async def add_storage(body: StorageAddRequest, _user: str = Depends(_require_auth)):
     error = ""
     final_path = ""
 
@@ -679,7 +719,7 @@ async def test_storage(body: StorageAddRequest):
 
 
 @app.delete("/api/storage/{index}")
-async def remove_storage(index: int):
+async def remove_storage(index: int, _user: str = Depends(_require_auth)):
     if not STORAGE_CONF.exists():
         raise HTTPException(status_code=404, detail="No storage sources configured")
     lines = [
@@ -694,9 +734,99 @@ async def remove_storage(index: int):
     return {"success": True}
 
 
+# ── Routes: OneDrive ─────────────────────────────────────────────────────────
+_onedrive_flow: dict = {}
+
+
+@app.post("/api/onedrive/connect")
+async def onedrive_connect(request: Request, _user: str = Depends(_require_auth)):
+    body = await request.json()
+    client_id = body.get("client_id", "").strip()
+    tenant_id = body.get("tenant_id", "").strip() or "common"
+    if not client_id:
+        raise HTTPException(400, "Microsoft App (Client) ID is required.")
+
+    from .onedrive import OneDriveConnector
+
+    connector = OneDriveConnector(client_id, tenant_id)
+    try:
+        flow = connector.start_device_flow()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+    global _onedrive_flow
+    _onedrive_flow = {"flow": flow, "connector": connector}
+
+    return {
+        "user_code": flow["user_code"],
+        "verification_uri": flow.get("verification_uri", "https://microsoft.com/devicelogin"),
+        "message": flow.get("message", ""),
+        "expires_in": flow.get("expires_in", 900),
+    }
+
+
+@app.post("/api/onedrive/complete")
+async def onedrive_complete(_user: str = Depends(_require_auth)):
+    global _onedrive_flow
+    if not _onedrive_flow:
+        raise HTTPException(400, "No active OneDrive connection. Start the connection first.")
+
+    connector = _onedrive_flow["connector"]
+    flow = _onedrive_flow["flow"]
+
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, connector.complete_device_flow, flow)
+    except Exception as e:
+        _onedrive_flow = {}
+        raise HTTPException(500, str(e))
+
+    _onedrive_flow = {}
+    cfg = load_config()
+    cfg["onedrive_client_id"] = connector.client_id
+    cfg["onedrive_tenant_id"] = connector.tenant_id
+    save_config(cfg)
+
+    return {"success": True, "message": "Connected to OneDrive!"}
+
+
+@app.post("/api/onedrive/sync")
+async def onedrive_sync(request: Request, _user: str = Depends(_require_auth)):
+    body = await request.json()
+    folder = body.get("folder", "/")
+
+    cfg = load_config()
+    client_id = cfg.get("onedrive_client_id")
+    tenant_id = cfg.get("onedrive_tenant_id", "common")
+    if not client_id:
+        raise HTTPException(400, "OneDrive is not configured. Connect first in Storage settings.")
+
+    from .onedrive import OneDriveConnector
+
+    connector = OneDriveConnector(client_id, tenant_id)
+    token = connector.get_access_token()
+    if not token:
+        raise HTTPException(401, "OneDrive session expired. Please reconnect in Storage settings.")
+
+    try:
+        loop = asyncio.get_event_loop()
+        local_path, count = await loop.run_in_executor(None, connector.download_files, folder, None, token)
+    except Exception as e:
+        raise HTTPException(500, f"Could not download files from OneDrive: {e}")
+
+    sources = _get_storage_sources()
+    if not any(s["path"] == local_path and s["type"] == "onedrive" for s in sources):
+        STORAGE_CONF.parent.mkdir(parents=True, exist_ok=True)
+        line = f"secondary|onedrive|OneDrive|{local_path}\n"
+        with open(STORAGE_CONF, "a", encoding="utf-8") as f:
+            f.write(line)
+
+    return {"success": True, "files_downloaded": count, "local_path": local_path, "message": f"Downloaded {count} files from OneDrive."}
+
+
 # ── Routes: Model Pull ───────────────────────────────────────────────────────
 @app.post("/api/pull")
-async def pull_model(req: PullRequest):
+async def pull_model(req: PullRequest, _user: str = Depends(_require_auth)):
     ollama_url = get_setting("ollama_host") or OLLAMA_HOST
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
@@ -747,7 +877,7 @@ async def pull_model(req: PullRequest):
 
 # ── Routes: Ingestion ────────────────────────────────────────────────────────
 @app.post("/api/ingest")
-async def ingest(req: IngestRequest):
+async def ingest(req: IngestRequest, _user: str = Depends(_require_auth)):
     script = PKG_DIR / "scripts" / "05_ingest_documents.py"
     if not script.exists():
         raise HTTPException(status_code=404, detail="Ingest script not found.")
@@ -796,7 +926,7 @@ async def ingest(req: IngestRequest):
 
 
 @app.post("/api/ingest/source/{index}")
-async def ingest_source(index: int):
+async def ingest_source(index: int, _user: str = Depends(_require_auth)):
     """Ingest documents from a specific storage source by index."""
     sources = _get_storage_sources()
     if index < 0 or index >= len(sources):
@@ -808,7 +938,7 @@ async def ingest_source(index: int):
 
 # ── Routes: Chat (RAG) ──────────────────────────────────────────────────────
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, _user: str = Depends(_require_auth)):
     if _get_chunk_count() == 0:
         raise HTTPException(status_code=422, detail="Vector store is empty. Ingest documents first.")
 
@@ -932,6 +1062,12 @@ async def chat(req: ChatRequest):
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
+    from .auth import decode_token
+
+    token = websocket.query_params.get("token")
+    if not token or not decode_token(token):
+        await websocket.close(code=4001, reason="Authentication required")
+        return
     await websocket.accept()
     try:
         while True:
@@ -1205,7 +1341,7 @@ async def list_skill_templates():
 
 
 @app.post("/api/skills/templates/{template_name}/enable")
-async def enable_skill_template(template_name: str):
+async def enable_skill_template(template_name: str, _user: str = Depends(_require_auth)):
     from .generation.skill_parser import SkillParser
 
     if not _BUILTIN_SKILLS_DIR.exists():
@@ -1230,7 +1366,7 @@ async def enable_skill_template(template_name: str):
 
 
 @app.post("/api/generate")
-async def generate_document(body: GenerateBody):
+async def generate_document(body: GenerateBody, _user: str = Depends(_require_auth)):
     from .generation.engine import GenerationEngine
     from .generation.models import GenerationRequest
     from .generation.skill_parser import load_skill
@@ -1321,7 +1457,7 @@ async def generate_document(body: GenerateBody):
 
 
 @app.post("/api/skills/draft")
-async def draft_skill(body: SkillDraftBody):
+async def draft_skill(body: SkillDraftBody, _user: str = Depends(_require_auth)):
     import asyncio
 
     from .skill_drafter import extract_rules, generate_skill_draft
@@ -1396,7 +1532,7 @@ async def draft_skill(body: SkillDraftBody):
 
 
 @app.post("/api/skills/upload")
-async def upload_skill(body: SkillUploadBody):
+async def upload_skill(body: SkillUploadBody, _user: str = Depends(_require_auth)):
     import tempfile
 
     from .generation.skill_parser import SkillParser
@@ -1434,7 +1570,7 @@ async def upload_skill(body: SkillUploadBody):
 
 
 @app.delete("/api/skills/{skill_name}")
-async def delete_skill(skill_name: str):
+async def delete_skill(skill_name: str, _user: str = Depends(_require_auth)):
     from .generation.skill_parser import SkillParser
 
     if SKILLS_DIR.exists():
@@ -1976,7 +2112,7 @@ async def get_document_content(path: str):
 
 # ── Routes: Clear Vectorstore ────────────────────────────────────────────────
 @app.delete("/api/vectorstore")
-async def clear_vectorstore():
+async def clear_vectorstore(_user: str = Depends(_require_auth)):
     _reset_vs_cache()
     try:
         import chromadb

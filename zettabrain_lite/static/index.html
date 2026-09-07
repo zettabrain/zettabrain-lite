@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ZettaBrain Lite</title>
 <link rel="stylesheet" href="/static/style.css">
-
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -17,10 +15,18 @@
       <div class="logo-title">Zetta<span>Brain</span></div>
       <p>AI-Powered Document Intelligence</p>
     </div>
-    <div class="signin-body">
-      <div id="google-signin-btn"></div>
-      <div class="signin-divider" id="signin-divider"><span>or</span></div>
-      <button class="btn btn-ghost btn-full" onclick="continueWithoutSignIn()">Continue without signing in</button>
+    <div class="signin-body" id="signin-body">
+      <div class="form-group">
+        <label>Username</label>
+        <input class="input-field" id="auth-username" placeholder="Choose a username" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input class="input-field" id="auth-password" type="password" placeholder="Choose a password" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitAuth()">
+      </div>
+      <div id="auth-error" style="color:var(--red); font-size:12px; display:none; margin-bottom:8px;"></div>
+      <button class="btn btn-primary btn-full" id="auth-submit-btn" onclick="submitAuth()">Create Account</button>
+      <button class="btn btn-ghost btn-full btn-sm" id="auth-toggle-btn" onclick="toggleAuthMode()" style="margin-top:6px;">Already have an account? Log in</button>
     </div>
     <p class="signin-note">Your data stays private. ZettaBrain runs entirely on your infrastructure.</p>
   </div>
@@ -333,6 +339,7 @@
               <option value="nfs">NFS Mount</option>
               <option value="smb">SMB/CIFS Share</option>
               <option value="s3">S3-Compatible (FUSE)</option>
+              <option value="onedrive">Microsoft OneDrive</option>
             </select>
           </div>
           <div class="form-group">
@@ -423,6 +430,30 @@
             </div>
           </div>
 
+          <!-- OneDrive fields -->
+          <div class="storage-fields" id="fields-onedrive">
+            <div class="form-group">
+              <label>Microsoft App (Client) ID</label>
+              <input class="input-field" id="storage-onedrive-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+              <p style="font-size:11px; color:var(--text3); margin-top:4px;">
+                Create an app at <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps" target="_blank" style="color:var(--accent);">Azure App Registrations</a>. Add "Files.Read.All" permission and enable "Mobile and desktop applications" platform.
+              </p>
+            </div>
+            <div class="form-group">
+              <label>Tenant ID <span style="font-weight:400; color:var(--text3);">(optional, defaults to "common")</span></label>
+              <input class="input-field" id="storage-onedrive-tenant" placeholder="common">
+            </div>
+            <div class="form-group">
+              <label>OneDrive Folder <span style="font-weight:400; color:var(--text3);">(leave blank for root)</span></label>
+              <input class="input-field" id="storage-onedrive-folder" placeholder="Documents/Projects">
+            </div>
+            <div id="onedrive-auth-status" style="margin-bottom:12px; font-size:12px; color:var(--text2);"></div>
+            <div style="display:flex; gap:10px;">
+              <button class="btn btn-primary" onclick="connectOneDrive()">Connect OneDrive</button>
+              <button class="btn btn-ghost" id="onedrive-sync-btn" onclick="syncOneDrive()" style="display:none;">Sync Files</button>
+            </div>
+          </div>
+
           <div style="display:flex; gap:10px; margin-top:16px;">
             <button class="btn btn-primary" onclick="addStorage()">Add &amp; Mount</button>
             <button class="btn btn-ghost" onclick="testStorage()">Test Connection</button>
@@ -502,48 +533,123 @@
         </div>
 
         <div class="panel-section">
-          <h3>Cloud Providers (API Keys)</h3>
+          <h3>Cloud AI Providers</h3>
           <p style="color:var(--text2); font-size:13px; margin-bottom:14px;">
-            Add API keys to enable cloud models in the model dropdown.
+            Select a provider, enter your API key, and save. Models from configured providers appear in the model dropdown.
           </p>
           <div class="form-group">
-            <label>Google Gemini API Key</label>
-            <input class="input-field" id="set-gemini-key" type="password" placeholder="AIza...">
+            <label>Provider</label>
+            <select class="input-field" id="cloud-provider-select" onchange="showProviderFields()">
+              <option value="">-- Choose a provider --</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="groq">Groq</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="together">Together AI</option>
+              <option value="cerebras">Cerebras</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="fireworks">Fireworks AI</option>
+            </select>
           </div>
-          <div class="form-group">
-            <label>Groq API Key</label>
-            <input class="input-field" id="set-groq-key" type="password" placeholder="gsk_...">
+          <div id="provider-status-summary" style="margin-bottom:12px; font-size:12px;"></div>
+
+          <div id="provider-fields-gemini" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>Gemini API Key</label>
+              <input class="input-field" id="set-gemini-key" type="password" placeholder="AIza...">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-gemini-model" placeholder="gemini-2.0-flash">
+            </div>
+            <div class="provider-status" id="status-gemini"></div>
           </div>
-          <div class="form-group">
-            <label>OpenAI API Key</label>
-            <input class="input-field" id="set-openai-key" type="password" placeholder="sk-...">
+
+          <div id="provider-fields-groq" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>Groq API Key</label>
+              <input class="input-field" id="set-groq-key" type="password" placeholder="gsk_...">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-groq-model" placeholder="llama-3.1-8b-instant">
+            </div>
+            <div class="provider-status" id="status-groq"></div>
           </div>
-          <div class="form-group">
-            <label>Anthropic API Key</label>
-            <input class="input-field" id="set-anthropic-key" type="password" placeholder="sk-ant-...">
+
+          <div id="provider-fields-openai" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>OpenAI API Key</label>
+              <input class="input-field" id="set-openai-key" type="password" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-openai-model" placeholder="gpt-4o-mini">
+            </div>
+            <div class="provider-status" id="status-openai"></div>
           </div>
-          <div class="form-group">
-            <label>Together AI API Key</label>
-            <input class="input-field" id="set-together-key" type="password" placeholder="">
+
+          <div id="provider-fields-anthropic" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>Anthropic API Key</label>
+              <input class="input-field" id="set-anthropic-key" type="password" placeholder="sk-ant-...">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-anthropic-model" placeholder="claude-sonnet-4-6">
+            </div>
+            <div class="provider-status" id="status-anthropic"></div>
           </div>
-          <div class="form-group">
-            <label>Cerebras API Key</label>
-            <input class="input-field" id="set-cerebras-key" type="password" placeholder="">
+
+          <div id="provider-fields-together" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>Together AI API Key</label>
+              <input class="input-field" id="set-together-key" type="password" placeholder="">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-together-model" placeholder="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo">
+            </div>
+            <div class="provider-status" id="status-together"></div>
           </div>
-          <div class="form-group">
-            <label>OpenRouter API Key</label>
-            <input class="input-field" id="set-openrouter-key" type="password" placeholder="">
+
+          <div id="provider-fields-cerebras" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>Cerebras API Key</label>
+              <input class="input-field" id="set-cerebras-key" type="password" placeholder="">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-cerebras-model" placeholder="llama3.1-8b">
+            </div>
+            <div class="provider-status" id="status-cerebras"></div>
           </div>
-          <div class="form-group">
-            <label>Fireworks API Key</label>
-            <input class="input-field" id="set-fireworks-key" type="password" placeholder="">
+
+          <div id="provider-fields-openrouter" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>OpenRouter API Key</label>
+              <input class="input-field" id="set-openrouter-key" type="password" placeholder="">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-openrouter-model" placeholder="meta-llama/llama-3.1-8b-instruct:free">
+            </div>
+            <div class="provider-status" id="status-openrouter"></div>
           </div>
-          <div style="border-bottom:1px solid var(--border); margin:12px 0;"></div>
-          <div class="form-group">
-            <label>Google OAuth Client ID (for sign-in)</label>
-            <input class="input-field" id="set-google-client-id" placeholder="xxxx.apps.googleusercontent.com">
+
+          <div id="provider-fields-fireworks" class="provider-fields" style="display:none;">
+            <div class="form-group">
+              <label>Fireworks AI API Key</label>
+              <input class="input-field" id="set-fireworks-key" type="password" placeholder="">
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input class="input-field" id="set-fireworks-model" placeholder="accounts/fireworks/models/llama-v3p1-8b-instruct">
+            </div>
+            <div class="provider-status" id="status-fireworks"></div>
           </div>
-          <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+
+          <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:12px;">Save Settings</button>
         </div>
       </div>
     </div>

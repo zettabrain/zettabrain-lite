@@ -75,6 +75,17 @@ class OpenAICompatibleProvider(LLMProvider):
             h["X-Title"] = "ZettaBrain Lite"
         return h
 
+    def _friendly_error(self, e: "httpx.HTTPStatusError") -> str:
+        status = e.response.status_code
+        name = self.provider_name
+        if status == 401:
+            return f"Your {name} API key appears to be invalid. Check it in Settings."
+        elif status == 429:
+            return f"{name} is temporarily busy. Wait a moment and try again, or switch to a different model."
+        elif status == 404:
+            return f"Model '{self.model}' was not found on {name}. Check the model name in Settings."
+        return f"Could not reach {name} (error {status}). Check your API key and internet connection."
+
     def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
@@ -93,13 +104,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"]
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise RuntimeError(f"Invalid API key for {self.provider_name}")
-            elif e.response.status_code == 429:
-                raise RuntimeError(f"{self.provider_name} rate limit exceeded")
-            raise RuntimeError(f"{self.provider_name} API error: {e.response.text[:300]}")
+            raise RuntimeError(self._friendly_error(e))
         except httpx.TimeoutException:
-            raise RuntimeError(f"{self.provider_name} request timed out after {self.timeout}s")
+            raise RuntimeError(
+                f"{self.provider_name} took too long to respond. Try again, or switch to a different model."
+            )
 
     def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         payload = {
@@ -129,9 +138,11 @@ class OpenAICompatibleProvider(LLMProvider):
                             except (json.JSONDecodeError, KeyError, IndexError):
                                 continue
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"{self.provider_name} streaming error: {e.response.text[:300]}")
-        except Exception as e:
-            raise RuntimeError(f"{self.provider_name} streaming failed: {e}")
+            raise RuntimeError(self._friendly_error(e))
+        except Exception:
+            raise RuntimeError(
+                f"Could not connect to {self.provider_name}. Check your internet connection and try again."
+            )
 
     def check_health(self) -> bool:
         try:

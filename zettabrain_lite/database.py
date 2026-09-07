@@ -10,6 +10,13 @@ from sqlmodel import Field, Session, SQLModel, create_engine
 from .config import DATABASE_PATH, DATABASE_URL
 
 
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, sa_column_kwargs={"unique": True})
+    password_hash: str
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class ChatHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     question: str

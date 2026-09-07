@@ -30,6 +30,9 @@ dependencies = [
     "flashrank>=0.2",
     "pypdf>=3.0",
     "docx2txt>=0.8",
+    "PyJWT>=2.8",
+    "passlib[bcrypt]>=1.7",
+    "msal>=1.28",
 ]
 
 [project.optional-dependencies]

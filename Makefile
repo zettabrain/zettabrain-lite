@@ -1,6 +1,6 @@
 .PHONY: dev install build clean
 
-dev:
+dev: install
 	python -m uvicorn zettabrain_lite.server:app --reload --port 7860
 
 install:

@@ -741,12 +741,18 @@ _onedrive_flow: dict = {}
 @app.post("/api/onedrive/connect")
 async def onedrive_connect(request: Request, _user: str = Depends(_require_auth)):
     body = await request.json()
-    client_id = body.get("client_id", "").strip()
-    tenant_id = body.get("tenant_id", "").strip() or "common"
-    if not client_id:
-        raise HTTPException(400, "Microsoft App (Client) ID is required.")
+    account_type = body.get("account_type", "custom").strip()
 
-    from .onedrive import OneDriveConnector
+    from .onedrive import ACCOUNT_TYPE_TENANTS, ZETTABRAIN_CLIENT_ID, OneDriveConnector
+
+    if account_type in ("personal", "work"):
+        client_id = ZETTABRAIN_CLIENT_ID
+        tenant_id = ACCOUNT_TYPE_TENANTS[account_type]
+    else:
+        client_id = body.get("client_id", "").strip()
+        tenant_id = body.get("tenant_id", "").strip() or "common"
+        if not client_id:
+            raise HTTPException(400, "App (Client) ID is required for custom apps.")
 
     connector = OneDriveConnector(client_id, tenant_id)
     try:

@@ -18,6 +18,14 @@ ONEDRIVE_DOWNLOAD_DIR = DATA_DIR / "onedrive"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 SCOPES = ["Files.Read.All"]
 
+ZETTABRAIN_CLIENT_ID = "61700550-9709-416f-bd08-e43cbb725b92"
+
+ACCOUNT_TYPE_TENANTS = {
+    "personal": "consumers",
+    "work": "organizations",
+    "custom": "common",
+}
+
 
 class OneDriveConnector:
     def __init__(self, client_id: str, tenant_id: str = "common"):

@@ -433,15 +433,25 @@
           <!-- OneDrive fields -->
           <div class="storage-fields" id="fields-onedrive">
             <div class="form-group">
-              <label>Microsoft App (Client) ID</label>
-              <input class="input-field" id="storage-onedrive-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-              <p style="font-size:11px; color:var(--text3); margin-top:4px;">
-                Create an app at <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps" target="_blank" style="color:var(--accent);">Azure App Registrations</a>. Add "Files.Read.All" permission and enable "Mobile and desktop applications" platform.
-              </p>
+              <label>Account Type</label>
+              <select class="input-field" id="storage-onedrive-account-type" onchange="toggleOneDriveMode()">
+                <option value="personal">Personal (Outlook / Hotmail)</option>
+                <option value="work">Work or School</option>
+                <option value="custom">Custom Azure App</option>
+              </select>
             </div>
-            <div class="form-group">
-              <label>Tenant ID <span style="font-weight:400; color:var(--text3);">(optional, defaults to "common")</span></label>
-              <input class="input-field" id="storage-onedrive-tenant" placeholder="common">
+            <div id="onedrive-custom-fields" style="display:none;">
+              <div class="form-group">
+                <label>Microsoft App (Client) ID</label>
+                <input class="input-field" id="storage-onedrive-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                <p style="font-size:11px; color:var(--text3); margin-top:4px;">
+                  Create an app at <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps" target="_blank" style="color:var(--accent);">Azure App Registrations</a>. Add "Files.Read.All" permission and enable "Mobile and desktop applications" platform.
+                </p>
+              </div>
+              <div class="form-group">
+                <label>Tenant ID <span style="font-weight:400; color:var(--text3);">(optional, defaults to "common")</span></label>
+                <input class="input-field" id="storage-onedrive-tenant" placeholder="common">
+              </div>
             </div>
             <div class="form-group">
               <label>OneDrive Folder <span style="font-weight:400; color:var(--text3);">(leave blank for root)</span></label>

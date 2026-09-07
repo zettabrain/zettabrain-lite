@@ -688,21 +688,32 @@ async function removeStorage(index) {
 }
 
 // ── OneDrive ─────────────────────────────────────────
+function toggleOneDriveMode() {
+  const mode = document.getElementById('storage-onedrive-account-type').value;
+  document.getElementById('onedrive-custom-fields').style.display = mode === 'custom' ? 'block' : 'none';
+}
+
 async function connectOneDrive() {
-  const clientId = document.getElementById('storage-onedrive-client-id').value.trim();
-  const tenantId = document.getElementById('storage-onedrive-tenant').value.trim() || 'common';
+  const accountType = document.getElementById('storage-onedrive-account-type').value;
   const statusEl = document.getElementById('onedrive-auth-status');
 
-  if (!clientId) { toast('App (Client) ID is required', 'error'); return; }
+  const payload = { account_type: accountType };
+  if (accountType === 'custom') {
+    const clientId = document.getElementById('storage-onedrive-client-id').value.trim();
+    const tenantId = document.getElementById('storage-onedrive-tenant').value.trim() || 'common';
+    if (!clientId) { toast('App (Client) ID is required for custom apps', 'error'); return; }
+    payload.client_id = clientId;
+    payload.tenant_id = tenantId;
+  }
 
-  statusEl.textContent = 'Starting device login...';
+  statusEl.textContent = 'Starting sign-in...';
   statusEl.style.color = 'var(--text2)';
 
   try {
     const r = await fetch('/api/onedrive/connect', {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ client_id: clientId, tenant_id: tenantId })
+      body: JSON.stringify(payload)
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Connection failed');

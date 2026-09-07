@@ -1800,6 +1800,36 @@ async function getWizardExampleContent() {
   return document.getElementById('wiz-example').value.trim();
 }
 
+const CATEGORY_DEFAULTS = {
+  pricing:       { temperature: 0.0, deterministic: true, citationRequired: true, skillType: 'quote' },
+  proposal:      { temperature: 0.3, citationRequired: true, skillType: 'document' },
+  compliance:    { temperature: 0.1, citationRequired: true, skillType: 'document' },
+  technical:     { temperature: 0.1, citationRequired: true, skillType: 'document' },
+  report:        { temperature: 0.2, citationRequired: true, skillType: 'document' },
+  communication: { temperature: 0.5, skillType: 'document' },
+  training:      { temperature: 0.3, citationRequired: true, skillType: 'document' },
+};
+
+const CATEGORY_KEYWORDS = {
+  pricing:       ['quote', 'invoice', 'pricing', 'price', 'billing', 'estimate', 'rate', 'bid', 'cost estimate'],
+  proposal:      ['proposal', 'rfp', 'pitch', 'business case', 'sow', 'scope of work', 'engagement'],
+  compliance:    ['compliance', 'audit', 'regulatory', 'legal', 'contract', 'risk', 'security', 'assessment'],
+  technical:     ['api', 'documentation', 'runbook', 'sop', 'procedure', 'data-dictionary', 'data dictionary', 'architecture', 'technical', 'specification', 'system design'],
+  report:        ['status', 'incident', 'release-notes', 'change-request', 'report', 'post-mortem', 'summary', 'meeting', 'notes', 'brief'],
+  communication: ['email', 'letter', 'memo', 'message', 'announcement', 'newsletter', 'marketing', 'drafter'],
+  training:      ['training', 'onboarding', 'guide', 'tutorial', 'knowledge-base', 'knowledge base', 'lesson', 'curriculum', 'handbook'],
+};
+
+function detectSkillCategory(name, goal) {
+  const text = (name + ' ' + goal).toLowerCase();
+  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    if (keywords.some(kw => new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(text))) {
+      return category;
+    }
+  }
+  return null;
+}
+
 function buildSkillMarkdown() {
   const name = document.getElementById('wiz-name').value.trim();
   const desc = document.getElementById('wiz-desc').value.trim();
@@ -1811,9 +1841,8 @@ function buildSkillMarkdown() {
   const sections = tmpl.sections.length > 0 ? tmpl.sections : ['Overview', 'Details', 'Conclusion'];
   const nameSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-  const pricingKeywords = ['quote', 'invoice', 'pricing', 'price', 'billing', 'estimate', 'rate'];
-  const isPricing = pricingKeywords.some(kw => name.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw));
-  const temperature = isPricing ? 0.0 : 0.4;
+  const category = detectSkillCategory(name, desc);
+  const categoryDefaults = CATEGORY_DEFAULTS[category] || { temperature: 0.4, skillType: 'document' };
 
   let description = desc;
   if (description.length < 120) description += '. Use this when you need to generate this type of document.';
@@ -1823,12 +1852,12 @@ function buildSkillMarkdown() {
   md += `name: ${nameSlug}\n`;
   md += `version: 1.0.0\n`;
   md += `description: ${description.split('\n')[0]}\n`;
-  md += `skill_type: ${isPricing ? 'quote' : 'document'}\n`;
+  md += `skill_type: ${categoryDefaults.skillType || 'document'}\n`;
   md += `requires_corpus: ${corpus}\n`;
-  md += `temperature: ${temperature}\n`;
+  md += `temperature: ${categoryDefaults.temperature}\n`;
   md += `max_tokens: ${maxTokens}\n`;
-  if (isPricing) md += `deterministic: true\n`;
-  if (citations) md += `citation_required: true\n`;
+  if (categoryDefaults.deterministic) md += `deterministic: true\n`;
+  if (citations || categoryDefaults.citationRequired) md += `citation_required: true\n`;
 
   const sourceDocNames = [];
   if (wizSelectedDocs.length > 0) {

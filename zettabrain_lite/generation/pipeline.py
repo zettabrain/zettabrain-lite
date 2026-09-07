@@ -13,6 +13,21 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
+# ── Identify Schema (DB-lookup path) ─────────────────────────────────────────
+
+
+class IdentifiedItem(BaseModel):
+    description: str
+    sku: str = ""
+    quantity: Decimal
+    unit: str = ""
+
+
+class IdentifiedRequest(BaseModel):
+    items: list[IdentifiedItem] = Field(default_factory=list)
+    customer: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
 # ── Extraction Schema ─────────────────────────────────────────────────────────
 
 
@@ -305,28 +320,51 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
 # ── Corpus Validation ─────────────────────────────────────────────────────────
 
 
+def _normalise_number(value: str) -> set[str]:
+    """Return several normalised forms of a numeric string for fuzzy corpus matching."""
+    forms: set[str] = {value}
+    # Remove thousands commas: "420,000" → "420000"
+    no_comma = value.replace(",", "")
+    forms.add(no_comma)
+    # Add thousands commas to a plain number: "420000" → "420,000"
+    try:
+        n = float(no_comma)
+        forms.add(f"{n:,.0f}")
+        forms.add(f"{n:,.2f}")
+        forms.add(str(int(n)) if n == int(n) else str(n))
+    except ValueError:
+        pass
+    return forms
+
+
 def validate_against_corpus(extracted: ExtractedData, corpus_text: str) -> list[str]:
-    """Check that extracted prices appear in the corpus. Returns advisory warnings."""
+    """Check that extracted prices appear in the corpus. Returns advisory warnings.
+
+    Number normalisation handles thousands separators so '420000' matches '420,000'.
+    """
     warnings: list[str] = []
     corpus_lower = corpus_text.lower()
 
     for item in extracted.line_items:
-        price_str = str(item.unit_price)
-        if price_str not in corpus_lower and f"${price_str}" not in corpus_lower:
+        forms = _normalise_number(str(item.unit_price))
+        found = any(f in corpus_lower or f"₦{f}" in corpus_lower or f"${f}" in corpus_lower for f in forms)
+        if not found:
             warnings.append(
-                f"Unit price ${price_str} for '{item.description}' was not found in the corpus. "
-                f"Verify this price is correct."
+                f"Unit price {item.unit_price} for '{item.description}' was not found in the corpus. "
+                "Verify this price is correct."
             )
 
     for fee in extracted.fees:
-        fee_str = str(fee.amount)
-        if fee_str not in corpus_lower and f"${fee_str}" not in corpus_lower:
-            warnings.append(f"Fee ${fee_str} for '{fee.description}' was not found in the corpus.")
+        forms = _normalise_number(str(fee.amount))
+        found = any(f in corpus_lower or f"₦{f}" in corpus_lower or f"${f}" in corpus_lower for f in forms)
+        if not found:
+            warnings.append(f"Fee {fee.amount} for '{fee.description}' was not found in the corpus.")
 
     for tax in extracted.taxes:
-        rate_str = str(tax.rate_percent)
-        if rate_str not in corpus_lower:
-            warnings.append(f"Tax rate {rate_str}% for '{tax.description}' was not found in the corpus.")
+        forms = _normalise_number(str(tax.rate_percent))
+        found = any(f in corpus_lower for f in forms)
+        if not found:
+            warnings.append(f"Tax rate {tax.rate_percent}% for '{tax.description}' was not found in the corpus.")
 
     return warnings
 
@@ -400,8 +438,149 @@ def build_format_prompt(
     summary = build_computed_summary(computed)
     return _FORMAT_PROMPT.format(
         skill_instructions=skill_instructions,
-        corpus_context=corpus_context,
+        corpus_context=corpus_context or "(no additional corpus context)",
         user_input=user_input,
         computed_summary=summary,
         grand_total=f"${computed.grand_total}",
+    )
+
+
+# ── Identify prompt (DB-lookup path) ─────────────────────────────────────────
+
+_IDENTIFY_PROMPT = """You are extracting order details from a customer request. Your ONLY job is to identify which products or services the customer wants and in what quantity. Do NOT look up, guess, or invent prices — prices will be retrieved from a separate database.
+
+# CUSTOMER REQUEST
+{user_input}
+
+# YOUR TASK
+Extract what was ordered. Output a single JSON object with these keys:
+
+{{
+  "items": [
+    {{
+      "description": "product or service name exactly as the customer described it",
+      "sku": "product code if explicitly mentioned (e.g. SV-003), or empty string",
+      "quantity": <number>,
+      "unit": "unit of measure if stated (month, each, hour, sqft, etc.), or empty string"
+    }}
+  ],
+  "customer": {{
+    "name": "customer or company name",
+    "contact": "contact person name if given",
+    "address": "address if given",
+    "phone": "phone if given"
+  }},
+  "metadata": {{
+    "delivery_address": "delivery address if different from customer address, else empty",
+    "notes": "payment terms, account type, start date, billing cycle, or other requirements"
+  }}
+}}
+
+RULES:
+1. List ONLY products/services explicitly requested — do not add extras.
+2. Convert word quantities to numbers ("three floors" → 3, "a pair" → 2).
+3. Do NOT estimate or invent prices, unit costs, fees, or taxes.
+4. Output ONLY the JSON object. No markdown, no explanation.
+
+JSON:"""
+
+
+def build_identify_prompt(user_input: str) -> str:
+    return _IDENTIFY_PROMPT.format(user_input=user_input)
+
+
+def parse_identification(raw: str) -> Optional[IdentifiedRequest]:
+    """Parse LLM output from the identify step into an IdentifiedRequest."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    text = text[start : end + 1]
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        req = IdentifiedRequest.model_validate(data)
+    except (ValidationError, InvalidOperation):
+        return None
+    if not req.items:
+        return None
+    return req
+
+
+def lookup_prices_from_db(
+    identified: IdentifiedRequest,
+    source_files: Optional[list[str]] = None,
+) -> tuple[ExtractedData, list[str]]:
+    """Look up prices from the SQLite price list DB.
+
+    Returns (ExtractedData with prices filled in, list of warning strings).
+    Items not found in the DB are omitted from line_items and generate a warning.
+    """
+    from ..price_list import search_by_sku, search_items  # noqa: PLC0415
+
+    warnings: list[str] = []
+    line_items: list[LineItem] = []
+    source_file = source_files[0] if source_files else ""
+
+    for item in identified.items:
+        db_row: Optional[dict] = None
+
+        # 1. Exact SKU lookup
+        if item.sku:
+            db_row = search_by_sku(item.sku, source_file)
+
+        # 2. FTS5 trigram search by full description
+        if db_row is None:
+            results = search_items(item.description, source_file, limit=3)
+            if results:
+                db_row = results[0]
+
+        # 3. Shorter query (first 3 significant words) as fallback
+        if db_row is None:
+            words = [w for w in item.description.split() if len(w) > 2][:3]
+            short_query = " ".join(words)
+            if short_query and short_query.lower() != item.description.lower():
+                results = search_items(short_query, source_file, limit=3)
+                if results:
+                    db_row = results[0]
+
+        if db_row is None:
+            warnings.append(
+                f"'{item.description}' was not found in the price list. "
+                "Check that the product name matches the price list exactly, then re-ingest."
+            )
+            continue
+
+        try:
+            unit_price = Decimal(str(db_row["base_price"]))
+        except (InvalidOperation, TypeError):
+            warnings.append(f"Invalid price for '{db_row['name']}' in price list DB — skipping.")
+            continue
+
+        line_items.append(
+            LineItem(
+                description=db_row["name"],
+                unit=item.unit or db_row.get("unit", ""),
+                quantity=Decimal(str(item.quantity)),
+                unit_price=unit_price,
+                discount_percent=Decimal("0"),
+                source_ref=db_row.get("source_file", ""),
+            )
+        )
+
+    return (
+        ExtractedData(
+            line_items=line_items,
+            customer=identified.customer,
+            metadata=identified.metadata,
+        ),
+        warnings,
     )

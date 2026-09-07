@@ -120,11 +120,24 @@ class GenerationEngine:
             temperature = request.temperature if request.temperature is not None else skill.temperature
             max_tokens = request.max_tokens if request.max_tokens is not None else skill.max_tokens
 
-            use_pipeline = skill.deterministic and corpus_context is not None
+            from ..price_list import has_price_data  # noqa: PLC0415
+
+            source_files = skill.source_documents or []
+            price_db_available = has_price_data(source_files if source_files else None)
+            use_pipeline = skill.deterministic and (corpus_context is not None or price_db_available)
 
             if use_pipeline:
                 result = self._generate_deterministic(
-                    skill, request, corpus_context, citations, retrieval_warnings, temperature, max_tokens, start_time
+                    skill,
+                    request,
+                    corpus_context,
+                    citations,
+                    retrieval_warnings,
+                    temperature,
+                    max_tokens,
+                    start_time,
+                    price_db_available=price_db_available,
+                    source_files=source_files,
                 )
             else:
                 if skill.deterministic and corpus_context is None:
@@ -191,25 +204,105 @@ class GenerationEngine:
         self,
         skill: Skill,
         request: GenerationRequest,
-        corpus_context: str,
+        corpus_context: Optional[str],
         citations: List[str],
         retrieval_warnings: List[str],
         temperature: float,
         max_tokens: int,
         start_time: float,
+        price_db_available: bool = False,
+        source_files: Optional[List[str]] = None,
     ) -> GenerationResult:
         from .pipeline import (
             build_extraction_prompt,
             build_format_prompt,
+            build_identify_prompt,
             build_repair_prompt,
             compute_totals,
+            lookup_prices_from_db,
             parse_extraction,
+            parse_identification,
             validate_against_corpus,
         )
 
         warnings = list(retrieval_warnings)
+        pipeline_mode = "identify-lookup-compute-format" if price_db_available else "extract-compute-format"
 
-        # ── STEP 1: EXTRACT ──
+        if price_db_available:
+            # ── STEP 1: IDENTIFY (what was ordered — no price extraction) ──
+            identify_prompt = build_identify_prompt(request.input)
+            raw_identify = self.llm_provider.generate(
+                prompt=identify_prompt, temperature=0.0, max_tokens=1000
+            )
+            identified = parse_identification(raw_identify)
+
+            if identified is None:
+                logger.warning("Identify step failed, falling back to corpus extraction")
+                price_db_available = False  # drop to corpus path below
+
+            if identified is not None:
+                # ── STEP 2: LOOKUP (prices from DB — no LLM) ──
+                extracted, db_warnings = lookup_prices_from_db(identified, source_files)
+                warnings.extend(db_warnings)
+
+                if not extracted.line_items:
+                    warnings.append(
+                        "No products matched the price list. "
+                        "Check that product names in the request match the price list, then re-ingest."
+                    )
+                    return self._generate_single_shot(
+                        skill, request, corpus_context, citations, warnings, temperature, max_tokens, start_time
+                    )
+
+                # ── STEP 3: COMPUTE ──
+                computed = compute_totals(extracted)
+
+                # ── STEP 4: FORMAT ──
+                format_prompt = build_format_prompt(
+                    skill_instructions=skill.instructions,
+                    corpus_context=corpus_context or "",
+                    user_input=request.input,
+                    computed=computed,
+                )
+                content = self.llm_provider.generate(
+                    prompt=format_prompt, temperature=temperature, max_tokens=max_tokens
+                )
+
+                generation_time_ms = int((time.time() - start_time) * 1000)
+                return GenerationResult(
+                    id=str(uuid.uuid4()),
+                    skill_name=skill.name,
+                    skill_version=skill.version,
+                    content=content,
+                    metadata={
+                        "input": request.input,
+                        "pipeline": pipeline_mode,
+                        "grand_total": str(computed.grand_total),
+                        "computation_log": computed.computation_log,
+                        "price_source": "database",
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "model": getattr(self.llm_provider, "model", "unknown"),
+                        "corpus_used": corpus_context is not None,
+                    },
+                    created_at=datetime.now(),
+                    success=True,
+                    generation_time_ms=generation_time_ms,
+                    citations=citations,
+                    warnings=warnings,
+                )
+
+        # ── Corpus extraction path (no price DB) ──────────────────────────────
+        if corpus_context is None:
+            warnings.append(
+                "Could not extract structured pricing data. "
+                "Used standard generation instead — verify all calculations manually."
+            )
+            return self._generate_single_shot(
+                skill, request, corpus_context, citations, warnings, temperature, max_tokens, start_time
+            )
+
+        # ── STEP 1: EXTRACT (from corpus text) ──
         extraction_prompt = build_extraction_prompt(
             corpus_context=corpus_context,
             user_input=request.input,
@@ -268,6 +361,7 @@ class GenerationEngine:
                 "grand_total": str(computed.grand_total),
                 "computation_log": computed.computation_log,
                 "extraction_warnings": corpus_warnings,
+                "price_source": "corpus",
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "model": getattr(self.llm_provider, "model", "unknown"),

@@ -543,13 +543,18 @@ _CATEGORY_CONFIGS: dict[str, dict] = {
         "overrides": {"deterministic": True, "temperature": 0.0, "citation_required": True},
         "hint": (
             "PRICING SKILL: Set temperature: 0.0, deterministic: true, and citation_required: true in frontmatter. "
-            "The deterministic flag routes this skill through the Extract-Compute-Format pipeline — the LLM "
-            "extracts structured line items, Python computes all totals with exact decimal arithmetic, then the "
-            "LLM formats the result. The skill instructions must define the output table structure but must NOT "
-            "include calculation steps (the engine handles math). Instead, focus rules on: which fees apply when, "
-            "volume discount tiers with exact thresholds, tax treatment, payment terms by customer type, and what "
-            "to do when a price is not in the corpus (mark as [NEEDS INPUT], never invent). Include a line-item "
-            "table, subtotals, discounts, fees, tax, and grand total in the Output Structure."
+            "IMPORTANT — prices come from a structured database, not from corpus text extraction. "
+            "The pipeline works as follows: (1) the LLM reads the customer request and identifies which products "
+            "were ordered and in what quantity — it does NOT look up prices; (2) Python does a database lookup "
+            "to retrieve the exact unit price for each product; (3) Python computes all totals with exact decimal "
+            "arithmetic; (4) the LLM formats the final document. "
+            "The skill instructions must: define the output table structure (line items, fees, taxes, grand total); "
+            "specify rules for when fees apply (delivery zone, minimum order, urgency); specify discount rules "
+            "by customer type or volume; specify the tax treatment; and say what to do when a product is not "
+            "found in the price list (use [NEEDS INPUT], never invent a price). "
+            "Set source_documents in frontmatter to the exact filename of the price list (e.g. "
+            "flower_price_list.xlsx) so the skill is pinned to that price list. "
+            "Do NOT include any instruction asking the model to find or extract prices from documents."
         ),
     },
     "proposal": {

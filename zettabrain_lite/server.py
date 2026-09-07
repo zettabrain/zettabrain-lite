@@ -273,7 +273,7 @@ def _count_docs_all_sources() -> int:
         if p in seen or not p.exists():
             continue
         seen.add(p)
-        for ext in ["*.pdf", "*.txt", "*.docx", "*.md"]:
+        for ext in ["*.pdf", "*.txt", "*.docx", "*.md", "*.xlsx", "*.xls", "*.csv"]:
             total += len(list(p.rglob(ext)))
     return total
 
@@ -2133,6 +2133,26 @@ async def clear_vectorstore(_user: str = Depends(_require_auth)):
         INGEST_LOG.write_text("{}", encoding="utf-8")
 
     return {"success": True, "message": "Vector store cleared."}
+
+
+# ── Routes: Price List ───────────────────────────────────────────────────────
+@app.get("/api/price-list")
+async def get_price_list(source_file: str = "", _user: str = Depends(_require_auth)):
+    """Return all price list items, optionally filtered by source_file."""
+    from .price_list import get_all_items, list_source_files
+
+    sources = list_source_files()
+    items = get_all_items(source_file)
+    return {"sources": sources, "items": items, "total": len(items)}
+
+
+@app.delete("/api/price-list/{source_file:path}")
+async def delete_price_list(source_file: str, _user: str = Depends(_require_auth)):
+    """Remove all price list items for a source file."""
+    from .price_list import delete_source
+
+    count = delete_source(source_file)
+    return {"success": True, "deleted": count, "message": f"Removed {count} items for '{source_file}'."}
 
 
 # ── Helpers: Skills ──────────────────────────────────────────────────────────

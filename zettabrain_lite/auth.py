@@ -6,9 +6,9 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 import jwt
 from fastapi import HTTPException, Request
-from passlib.hash import bcrypt
 from sqlmodel import select
 
 from .config import get_setting, set_setting
@@ -27,11 +27,11 @@ def _get_or_create_secret() -> str:
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.verify(password, hashed)
+    return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
 def create_token(username: str) -> str:

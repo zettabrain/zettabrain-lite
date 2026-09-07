@@ -53,6 +53,9 @@ class SkillParser:
             "deprecated",
             "source_documents",
             "deterministic",
+            "currency",
+            "tax_rate",
+            "tax_name",
         ]
         for field in optional_fields:
             if field in metadata:

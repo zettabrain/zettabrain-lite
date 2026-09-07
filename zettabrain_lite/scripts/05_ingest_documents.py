@@ -270,6 +270,11 @@ def _load_pdf_price_rows(filepath: str) -> list[dict]:
     try:
         import fitz  # noqa: PLC0415
     except ImportError:
+        print(
+            f"  [WARN] {Path(filepath).name} — PDF table extraction requires PyMuPDF.\n"
+            "         Convert the price list to XLSX or CSV for reliable extraction,\n"
+            "         or install PyMuPDF:  pip install pymupdf"
+        )
         return []
     try:
         doc = fitz.open(filepath)

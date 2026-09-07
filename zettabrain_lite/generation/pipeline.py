@@ -59,6 +59,7 @@ class ExtractedData(BaseModel):
     taxes: list[TaxSpec] = Field(default_factory=list)
     customer: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    currency: str = ""  # ISO 4217 code detected from price list DB or skill frontmatter
 
 
 # ── Computed Result ───────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ class ComputedResult(BaseModel):
     computation_log: list[str]
     customer: dict[str, str]
     metadata: dict[str, Any]
+    currency: str = ""  # ISO 4217 code passed through from ExtractedData
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -217,6 +219,20 @@ def parse_extraction(raw: str) -> Optional[ExtractedData]:
     return extracted
 
 
+# ── Currency symbol lookup ─────────────────────────────────────────────────────
+
+_ISO_TO_SYM: dict[str, str] = {
+    "NGN": "₦", "USD": "$", "GBP": "£", "EUR": "€", "JPY": "¥",
+    "INR": "₹", "GHS": "GH₵", "KES": "KSh", "ZAR": "R",
+    "AUD": "A$", "CAD": "C$",
+}
+
+
+def _sym(currency: str) -> str:
+    """Return the display symbol for an ISO currency code, e.g. 'NGN' → '₦'."""
+    return _ISO_TO_SYM.get(currency.upper(), "")
+
+
 # ── Computation ───────────────────────────────────────────────────────────────
 
 TWO_PLACES = Decimal("0.01")
@@ -231,18 +247,19 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
     """Deterministic arithmetic on extracted data. All currency in Decimal."""
     log: list[str] = []
     line_details: list[dict[str, Any]] = []
+    s = _sym(extracted.currency)  # currency symbol for log strings
 
     product_subtotal = Decimal("0")
     total_discounts = Decimal("0")
 
     for i, item in enumerate(extracted.line_items, 1):
         line_total = _q(item.quantity * item.unit_price)
-        log.append(f"Line {i}: {item.quantity} {item.unit} x ${item.unit_price} = ${line_total}")
+        log.append(f"Line {i}: {item.quantity} {item.unit} x {s}{item.unit_price} = {s}{line_total}")
 
         discount_amount = Decimal("0")
         if item.discount_percent > 0:
             discount_amount = _q(line_total * item.discount_percent / Decimal("100"))
-            log.append(f"  Discount: {item.discount_percent}% = -${discount_amount} ({item.discount_reason})")
+            log.append(f"  Discount: {item.discount_percent}% = -{s}{discount_amount} ({item.discount_reason})")
 
         net_total = line_total - discount_amount
         product_subtotal += line_total
@@ -262,10 +279,10 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
         })
 
     discounted_subtotal = product_subtotal - total_discounts
-    log.append(f"Product subtotal: ${product_subtotal}")
+    log.append(f"Product subtotal: {s}{product_subtotal}")
     if total_discounts > 0:
-        log.append(f"Total discounts: -${total_discounts}")
-        log.append(f"Discounted subtotal: ${discounted_subtotal}")
+        log.append(f"Total discounts: -{s}{total_discounts}")
+        log.append(f"Discounted subtotal: {s}{discounted_subtotal}")
 
     total_fees = Decimal("0")
     fee_details: list[dict[str, Any]] = []
@@ -277,10 +294,10 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
             "amount": str(amount),
             "source_ref": fee.source_ref,
         })
-        log.append(f"Fee: {fee.description} = ${amount}")
+        log.append(f"Fee: {fee.description} = {s}{amount}")
 
     subtotal_before_tax = discounted_subtotal + total_fees
-    log.append(f"Subtotal before tax: ${subtotal_before_tax}")
+    log.append(f"Subtotal before tax: {s}{subtotal_before_tax}")
 
     total_tax = Decimal("0")
     tax_details: list[dict[str, Any]] = []
@@ -295,10 +312,10 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
             "tax_amount": str(tax_amount),
             "source_ref": tax.source_ref,
         })
-        log.append(f"Tax: {tax.description} ({tax.rate_percent}% of ${tax_base}) = ${tax_amount}")
+        log.append(f"Tax: {tax.description} ({tax.rate_percent}% of {s}{tax_base}) = {s}{tax_amount}")
 
     grand_total = _q(subtotal_before_tax + total_tax)
-    log.append(f"GRAND TOTAL: ${grand_total}")
+    log.append(f"GRAND TOTAL: {s}{grand_total}")
 
     return ComputedResult(
         line_details=line_details,
@@ -314,6 +331,7 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
         computation_log=log,
         customer=extracted.customer,
         metadata=extracted.metadata,
+        currency=extracted.currency,
     )
 
 
@@ -382,7 +400,12 @@ def build_repair_prompt(raw_output: str) -> str:
 
 def build_computed_summary(computed: ComputedResult) -> str:
     """Format computed results into a human-readable block for the format prompt."""
-    parts = ["## Customer"]
+    s = _sym(computed.currency)
+    currency_label = f"{computed.currency} ({s})" if computed.currency else "unknown"
+
+    parts = [f"## Currency\n{currency_label} — use this symbol for ALL monetary amounts. Never use a different currency symbol.\n"]
+
+    parts.append("## Customer")
     for key, val in computed.customer.items():
         if val:
             parts.append(f"- {key}: {val}")
@@ -391,21 +414,21 @@ def build_computed_summary(computed: ComputedResult) -> str:
     parts.append("| # | Description | Qty | Unit | Unit Price | Line Total | Discount | Net |")
     parts.append("|---|-------------|-----|------|------------|------------|----------|-----|")
     for i, ld in enumerate(computed.line_details, 1):
-        disc = f"-${ld['discount_amount']}" if Decimal(ld["discount_amount"]) > 0 else "-"
+        disc = f"-{s}{ld['discount_amount']}" if Decimal(ld["discount_amount"]) > 0 else "-"
         parts.append(
             f"| {i} | {ld['description']} | {ld['quantity']} | {ld['unit']} "
-            f"| ${ld['unit_price']} | ${ld['line_total']} | {disc} | ${ld['net_total']} |"
+            f"| {s}{ld['unit_price']} | {s}{ld['line_total']} | {disc} | {s}{ld['net_total']} |"
         )
 
     if computed.fee_details:
         parts.append("\n## Fees")
         for fd in computed.fee_details:
-            parts.append(f"- {fd['description']}: ${fd['amount']}")
+            parts.append(f"- {fd['description']}: {s}{fd['amount']}")
 
     if computed.tax_details:
         parts.append("\n## Taxes")
         for td in computed.tax_details:
-            parts.append(f"- {td['description']}: {td['rate_percent']}% of ${td['tax_base']} = ${td['tax_amount']}")
+            parts.append(f"- {td['description']}: {td['rate_percent']}% of {s}{td['tax_base']} = {s}{td['tax_amount']}")
 
     parts.append("\n## Calculation Summary")
     for line in computed.computation_log:
@@ -436,12 +459,13 @@ def build_format_prompt(
     computed: ComputedResult,
 ) -> str:
     summary = build_computed_summary(computed)
+    s = _sym(computed.currency)
     return _FORMAT_PROMPT.format(
         skill_instructions=skill_instructions,
         corpus_context=corpus_context or "(no additional corpus context)",
         user_input=user_input,
         computed_summary=summary,
-        grand_total=f"${computed.grand_total}",
+        grand_total=f"{s}{computed.grand_total}",
     )
 
 
@@ -529,6 +553,7 @@ def lookup_prices_from_db(
     warnings: list[str] = []
     line_items: list[LineItem] = []
     source_file = source_files[0] if source_files else ""
+    detected_currency = ""
 
     for item in identified.items:
         db_row: Optional[dict] = None
@@ -565,6 +590,9 @@ def lookup_prices_from_db(
             warnings.append(f"Invalid price for '{db_row['name']}' in price list DB — skipping.")
             continue
 
+        if not detected_currency and db_row.get("currency"):
+            detected_currency = db_row["currency"]
+
         line_items.append(
             LineItem(
                 description=db_row["name"],
@@ -581,6 +609,7 @@ def lookup_prices_from_db(
             line_items=line_items,
             customer=identified.customer,
             metadata=identified.metadata,
+            currency=detected_currency,
         ),
         warnings,
     )

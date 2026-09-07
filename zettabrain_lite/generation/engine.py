@@ -213,7 +213,10 @@ class GenerationEngine:
         price_db_available: bool = False,
         source_files: Optional[List[str]] = None,
     ) -> GenerationResult:
+        from decimal import Decimal as _Dec
+
         from .pipeline import (
+            TaxSpec,
             build_extraction_prompt,
             build_format_prompt,
             build_identify_prompt,
@@ -244,6 +247,20 @@ class GenerationEngine:
                 # ── STEP 2: LOOKUP (prices from DB — no LLM) ──
                 extracted, db_warnings = lookup_prices_from_db(identified, source_files)
                 warnings.extend(db_warnings)
+
+                # Propagate skill currency as fallback if DB rows had no currency stored
+                if not extracted.currency and skill.currency:
+                    extracted.currency = skill.currency
+
+                # Inject tax from skill frontmatter — no LLM involvement in tax calculation
+                if skill.tax_rate > 0 and not extracted.taxes:
+                    extracted.taxes.append(
+                        TaxSpec(
+                            description=skill.tax_name or "Tax",
+                            rate_percent=_Dec(str(skill.tax_rate)),
+                            source_ref="skill configuration",
+                        )
+                    )
 
                 if not extracted.line_items:
                     warnings.append(
@@ -333,6 +350,10 @@ class GenerationEngine:
 
         corpus_warnings = validate_against_corpus(extracted, corpus_context)
         warnings.extend(corpus_warnings)
+
+        # Propagate skill currency so computed summary uses the right symbol
+        if not extracted.currency and skill.currency:
+            extracted.currency = skill.currency
 
         # ── STEP 2: COMPUTE ──
         computed = compute_totals(extracted)

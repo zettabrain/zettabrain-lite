@@ -35,6 +35,9 @@ class Skill(BaseModel):
 
     source_documents: List[str] = Field(default_factory=list)
     deterministic: bool = False
+    currency: str = ""      # ISO 4217 code, e.g. "NGN", "USD" — detected from price list DB
+    tax_rate: float = 0.0   # e.g. 7.5 for 7.5%
+    tax_name: str = "Tax"   # e.g. "VAT", "GST", "Sales Tax"
 
 
 class GenerationRequest(BaseModel):

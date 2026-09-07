@@ -537,6 +537,20 @@ def _to_slug(name: str) -> str:
     return slug.strip("-")
 
 
+# Suggested tax rates by currency — used by the wizard when auto-detecting currency from price list DB
+_DEFAULT_TAX_RATES: dict[str, tuple[str, float]] = {
+    "NGN": ("VAT", 7.5),    # Nigeria — FIRS standard rate
+    "GBP": ("VAT", 20.0),   # UK
+    "GHS": ("VAT", 15.0),   # Ghana
+    "KES": ("VAT", 16.0),   # Kenya
+    "ZAR": ("VAT", 15.0),   # South Africa
+    "INR": ("GST", 18.0),   # India standard rate
+    "AUD": ("GST", 10.0),   # Australia
+    "CAD": ("HST", 13.0),   # Canada (Ontario)
+    # USD, EUR left at 0 — rates vary too much by jurisdiction
+}
+
+
 _CATEGORY_CONFIGS: dict[str, dict] = {
     "pricing": {
         "keywords": {"quote", "invoice", "pricing", "price", "billing", "estimate", "rate", "bid", "cost estimate"},
@@ -704,7 +718,10 @@ def generate_skill_draft(
     example_output: str = "",
     rules: list[dict] | None = None,
     source_documents: list[str] | None = None,
+    pricing_config: dict | None = None,
 ) -> dict:
+    """Generate a skill draft. pricing_config={'currency': 'NGN', 'tax_name': 'VAT', 'tax_rate': 7.5}
+    is auto-detected from the price list DB and injected into frontmatter overrides for pricing skills."""
     display_name = name or "Untitled Skill"
     name_slug = _to_slug(display_name)
     tone_list = tone or ["Professional"]
@@ -764,8 +781,12 @@ def generate_skill_draft(
         except Exception:
             log.debug("Repair attempt failed", exc_info=True)
 
-    if category_config:
-        content = _force_frontmatter_overrides(content, category_config["overrides"])
+    overrides = dict(category_config["overrides"]) if category_config else {}
+    if pricing_config:
+        # Programmatically inject currency, tax_rate, tax_name — no LLM guessing
+        overrides.update(pricing_config)
+    if overrides:
+        content = _force_frontmatter_overrides(content, overrides)
 
     return {
         "content": content,

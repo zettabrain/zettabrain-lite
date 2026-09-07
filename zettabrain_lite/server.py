@@ -1510,6 +1510,28 @@ async def draft_skill(body: SkillDraftBody, _user: str = Depends(_require_auth))
         sources = _get_sources()
         doc_types = list({Path(s).suffix.lstrip(".").lower() for s in sources if "." in s})
 
+    # Auto-detect currency and suggest tax rate for pricing skills — no manual editing required
+    pricing_config: dict | None = None
+    try:
+        from .skill_drafter import _DEFAULT_TAX_RATES, _detect_skill_category  # noqa: PLC0415
+
+        if _detect_skill_category(body.name or "", body.goal) == "pricing" and body.source_documents:
+            from .price_list import get_all_items  # noqa: PLC0415
+
+            source = body.source_documents[0]
+            items = get_all_items(source)
+            currencies = {item["currency"] for item in items if item.get("currency")}
+            if len(currencies) == 1:
+                detected_currency = currencies.pop()
+                tax_name, tax_rate = _DEFAULT_TAX_RATES.get(detected_currency, ("Tax", 0.0))
+                pricing_config = {
+                    "currency": detected_currency,
+                    "tax_name": tax_name,
+                    "tax_rate": tax_rate,
+                }
+    except Exception:
+        pass  # Non-fatal — skill generation continues without pricing_config
+
     try:
         result = await asyncio.to_thread(
             generate_skill_draft,
@@ -1524,6 +1546,7 @@ async def draft_skill(body: SkillDraftBody, _user: str = Depends(_require_auth))
             example_output=body.example_output,
             rules=rules,
             source_documents=body.source_documents or [],
+            pricing_config=pricing_config,
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))

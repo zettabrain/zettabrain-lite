@@ -5,8 +5,11 @@ Local-first RAG + Skills platform, single-user edition. Ingest your own document
 ## Install
 
 ```bash
-pipx install "zettabrain-lite[all] @ git+https://github.com/zettabrain/zettabrain-lite.git@skill-wizard-upgrade"
+pipx install "zettabrain-lite[all] @ git+https://github.com/zettabrain/zettabrain-lite.git@skill-quality-and-ingestion"
 ```
+
+The `[all]` extra is required for price lists: it pulls `pymupdf` for PDF tables.
+`openpyxl` (XLSX) is a base dependency and is always installed.
 
 ## Run
 

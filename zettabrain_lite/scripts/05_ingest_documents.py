@@ -121,7 +121,10 @@ EMBED_MODEL = os.environ.get("ZETTABRAIN_EMBED_MODEL", "nomic-embed-text")
 HASH_CACHE = _default_hash_cache()
 INGEST_ERROR_LOG = str(Path(CHROMA_PATH).parent / "ingest_errors.log")
 
-SUPPORTED = {".pdf", ".txt", ".docx", ".md", ".xlsx", ".xls", ".csv"}
+try:
+    from zettabrain_lite.config import SUPPORTED_EXTENSIONS as SUPPORTED
+except ImportError:  # running the script standalone, outside the installed package
+    SUPPORTED = {".pdf", ".txt", ".md", ".docx", ".doc", ".xlsx", ".xls", ".csv"}
 
 
 # -------------------------------------------------------

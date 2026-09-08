@@ -20,6 +20,11 @@ CONFIG_FILE = BASE_DIR / "config.json"
 DATABASE_PATH = DATA_DIR / "lite.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
+# File types the ingester can read. Every place that filters files — folder scans, uploads,
+# and cloud storage sync — must use this set, or a format is silently dropped on one path
+# while working on another.
+SUPPORTED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".docx", ".doc", ".xlsx", ".xls", ".csv"})
+
 PORT = int(os.environ.get("ZETTABRAIN_LITE_PORT", "7860"))
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 LLM_MODEL = os.environ.get("ZETTABRAIN_LLM_MODEL", "llama3.1:8b")

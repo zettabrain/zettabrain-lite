@@ -32,6 +32,7 @@ from .config import (
     OLLAMA_HOST,
     SKILLS_DIR,
     STORAGE_CONF,
+    SUPPORTED_EXTENSIONS,
     get_setting,
     load_config,
     save_config,
@@ -276,8 +277,8 @@ def _count_docs_all_sources() -> int:
         if p in seen or not p.exists():
             continue
         seen.add(p)
-        for ext in ["*.pdf", "*.txt", "*.docx", "*.md", "*.xlsx", "*.xls", "*.csv"]:
-            total += len(list(p.rglob(ext)))
+        for ext in SUPPORTED_EXTENSIONS:
+            total += len(list(p.rglob(f"*{ext}")))
     return total
 
 

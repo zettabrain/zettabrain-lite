@@ -9,7 +9,7 @@ from typing import Optional
 import httpx
 import msal
 
-from .config import BASE_DIR, DATA_DIR
+from .config import BASE_DIR, DATA_DIR, SUPPORTED_EXTENSIONS
 
 log = logging.getLogger(__name__)
 
@@ -91,17 +91,24 @@ class OneDriveConnector:
             url = f"{GRAPH_BASE}/me/drive/root:/{folder_path.strip('/')}:/children"
 
         files = []
+        headers = {"Authorization": f"Bearer {token}"}
         with httpx.Client(timeout=30) as client:
-            resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
-            resp.raise_for_status()
-            for item in resp.json().get("value", []):
-                files.append({
-                    "name": item["name"],
-                    "id": item["id"],
-                    "size": item.get("size", 0),
-                    "is_folder": "folder" in item,
-                    "download_url": item.get("@microsoft.graph.downloadUrl"),
-                })
+            # Graph pages results (200 per page by default). Without following nextLink a
+            # large folder syncs only its first page and reports success.
+            next_url: Optional[str] = url
+            while next_url:
+                resp = client.get(next_url, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
+                for item in payload.get("value", []):
+                    files.append({
+                        "name": item["name"],
+                        "id": item["id"],
+                        "size": item.get("size", 0),
+                        "is_folder": "folder" in item,
+                        "download_url": item.get("@microsoft.graph.downloadUrl"),
+                    })
+                next_url = payload.get("@odata.nextLink")
         return files
 
     def download_files(
@@ -110,8 +117,9 @@ class OneDriveConnector:
         extensions: Optional[list[str]] = None,
         token: Optional[str] = None,
     ) -> tuple[str, int]:
-        if extensions is None:
-            extensions = [".pdf", ".txt", ".docx", ".md"]
+        # Default to every format the ingester understands. This list used to omit
+        # spreadsheets, so .xlsx files were skipped without any message while .pdf synced.
+        allowed = {e.lower() for e in extensions} if extensions else set(SUPPORTED_EXTENSIONS)
 
         if not token:
             token = self.get_access_token()
@@ -121,15 +129,18 @@ class OneDriveConnector:
         ONEDRIVE_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         files = self.list_files(folder_path, token)
         count = 0
+        skipped: list[str] = []
 
         with httpx.Client(timeout=120) as client:
             for f in files:
                 if f["is_folder"]:
                     continue
                 ext = Path(f["name"]).suffix.lower()
-                if ext not in extensions:
+                if ext not in allowed:
+                    skipped.append(f["name"])
                     continue
                 if not f.get("download_url"):
+                    skipped.append(f["name"])
                     continue
 
                 dest = ONEDRIVE_DOWNLOAD_DIR / f["name"]
@@ -138,5 +149,8 @@ class OneDriveConnector:
                 dest.write_bytes(resp.content)
                 count += 1
                 log.info("Downloaded %s (%d bytes)", f["name"], len(resp.content))
+
+        if skipped:
+            log.info("Skipped %d unsupported file(s): %s", len(skipped), ", ".join(skipped[:10]))
 
         return str(ONEDRIVE_DOWNLOAD_DIR), count

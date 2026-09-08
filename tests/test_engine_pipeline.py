@@ -110,7 +110,9 @@ class TestDeterministicPipeline:
 
         assert result.success
         assert result.metadata["pipeline"] == "extract-compute-format"
-        assert result.metadata["grand_total"] == "6712.88"
+        # 100 x $65.00 = 6500.00, less 5% volume discount (325.00) = 6175.00,
+        # plus 45.00 + 150.00 delivery fees = 6370.00, plus 5.3% tax (337.61) = 6707.61.
+        assert result.metadata["grand_total"] == "6707.61"
         assert "GRAND TOTAL" in result.content
 
     def test_extraction_fails_then_repairs(self):

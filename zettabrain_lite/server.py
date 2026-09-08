@@ -5,6 +5,7 @@ Single-user RAG + Skills platform with multi-provider LLM support.
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -37,6 +38,8 @@ from .config import (
     set_setting,
 )
 from .retrieval import ADVANCED_RAG_PROMPT, advanced_retrieve, format_context, hybrid_retrieve
+
+logger = logging.getLogger(__name__)
 
 PKG_DIR = Path(__file__).parent
 STATIC_DIR = PKG_DIR / "static"
@@ -404,6 +407,7 @@ class SkillDraftBody(BaseModel):
     example_output: str = ""
     source_documents: list = []
     model: Optional[str] = None
+    category: Optional[str] = None  # user's choice of document-type guidance; None = auto-detect
 
 
 # ── Routes: Authentication ────────────────────────────────────────────────────
@@ -1501,36 +1505,54 @@ async def draft_skill(body: SkillDraftBody, _user: str = Depends(_require_auth))
 
     rules: list = []
     doc_types: list = []
+    rules_error = ""
     if body.requires_corpus and _get_chunk_count() > 0:
         try:
             retriever = _build_corpus_retriever()
-            rules = await asyncio.to_thread(extract_rules, llm_fn, retriever)
+            # Probe with the user's own goal as well as the fixed queries — the fixed set is
+            # governance vocabulary and misses domain rules in most corpora.
+            rules = await asyncio.to_thread(extract_rules, llm_fn, retriever, 25, body.goal)
         except Exception:
+            logger.warning("Rule extraction failed during skill drafting", exc_info=True)
             rules = []
+            rules_error = "Could not read rules from your documents. The skill was written without them."
         sources = _get_sources()
         doc_types = list({Path(s).suffix.lstrip(".").lower() for s in sources if "." in s})
 
-    # Auto-detect currency and suggest tax rate for pricing skills — no manual editing required
+    # Read currency and tax rate from the price list itself — a rate stated in the user's own
+    # file beats a per-currency default, which is only a guess at their jurisdiction.
     pricing_config: dict | None = None
+    tax_source = ""
     try:
-        from .skill_drafter import _DEFAULT_TAX_RATES, _detect_skill_category  # noqa: PLC0415
+        from .skill_drafter import _CATEGORY_CONFIGS, _DEFAULT_TAX_RATES, _detect_skill_category  # noqa: PLC0415
 
-        if _detect_skill_category(body.name or "", body.goal) == "pricing" and body.source_documents:
-            from .price_list import get_all_items  # noqa: PLC0415
+        chosen = body.category if body.category in _CATEGORY_CONFIGS else None
+        effective_category = chosen or _detect_skill_category(body.name or "", body.goal)
+        if body.category == "none":
+            effective_category = None
+
+        if effective_category == "pricing" and body.source_documents:
+            from .price_list import get_all_items, get_tax_setting  # noqa: PLC0415
 
             source = body.source_documents[0]
             items = get_all_items(source)
             currencies = {item["currency"] for item in items if item.get("currency")}
             if len(currencies) == 1:
                 detected_currency = currencies.pop()
-                tax_name, tax_rate = _DEFAULT_TAX_RATES.get(detected_currency, ("Tax", 0.0))
+                from_file = get_tax_setting(source)
+                if from_file:
+                    tax_name, tax_rate = from_file["name"], from_file["rate"]
+                    tax_source = "price list"
+                else:
+                    tax_name, tax_rate = _DEFAULT_TAX_RATES.get(detected_currency, ("Tax", 0.0))
+                    tax_source = "currency default" if tax_rate else ""
                 pricing_config = {
                     "currency": detected_currency,
                     "tax_name": tax_name,
                     "tax_rate": tax_rate,
                 }
     except Exception:
-        pass  # Non-fatal — skill generation continues without pricing_config
+        logger.debug("Pricing config detection failed", exc_info=True)
 
     try:
         result = await asyncio.to_thread(
@@ -1547,6 +1569,7 @@ async def draft_skill(body: SkillDraftBody, _user: str = Depends(_require_auth))
             rules=rules,
             source_documents=body.source_documents or [],
             pricing_config=pricing_config,
+            category=body.category,
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -1557,6 +1580,10 @@ async def draft_skill(body: SkillDraftBody, _user: str = Depends(_require_auth))
         )
 
     result["doc_types"] = doc_types
+    result["corpus_used"] = bool(body.requires_corpus)
+    result["rules_error"] = rules_error
+    if pricing_config:
+        result["pricing_config"] = dict(pricing_config, tax_source=tax_source)
     return result
 
 

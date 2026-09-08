@@ -22,7 +22,7 @@ from typing import Optional
 import google.auth
 import google.auth.transport.requests
 import httpx
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 log = logging.getLogger("trial-proxy")

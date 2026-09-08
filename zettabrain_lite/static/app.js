@@ -1495,6 +1495,7 @@ function downloadGuideAsPDF() {
 let wizStep = 1;
 let wizSelectedTones = [];
 let wizDraftQuality = null;
+let wizSelectedCategory = null;   // null = let the server guess the document type
 
 // ── Skill Markdown Viewer ─────────────────────────────
 let _viewSkillName = '';
@@ -1632,6 +1633,7 @@ function openSkillWizard() {
   wizSelectedTones = ['Professional'];
   wizSelectedTemplate = '';
   wizDraftQuality = null;
+  wizSelectedCategory = null;
   wizSelectedDocs = [];
   wizUploadedFiles = [];
 
@@ -1749,6 +1751,7 @@ async function wizNext() {
           example_output: example,
           source_documents: wizSelectedDocs.map(d => d.name).concat(wizUploadedFiles.map(f => f.name)),
           model: currentModel || undefined,
+          category: wizSelectedCategory || undefined,
         })
       });
       const data = await r.json();
@@ -1756,7 +1759,7 @@ async function wizNext() {
 
       document.getElementById('wiz-preview').value = data.content;
       wizDraftQuality = data.quality;
-      showWizQuality(data.quality, data.rules_found || 0);
+      showWizQuality(data);
     } catch (e) {
       toast('AI draft failed, using local builder: ' + e.message, 'info');
       document.getElementById('wiz-preview').value = buildSkillMarkdown();
@@ -1778,23 +1781,100 @@ async function wizNext() {
   updateWizSteps();
 }
 
-function showWizQuality(quality, rulesFound) {
+const CATEGORY_LABELS = {
+  pricing: 'Pricing / quotes',
+  proposal: 'Proposal',
+  compliance: 'Compliance / legal',
+  technical: 'Technical',
+  report: 'Report / analysis',
+  communication: 'Communication',
+  training: 'Training',
+};
+
+function showWizQuality(data) {
   const banner = document.getElementById('wiz-quality-banner');
+  const quality = data && data.quality;
   if (!quality) { banner.style.display = 'none'; return; }
 
-  const passed = quality.passed;
-  banner.className = 'wiz-quality-banner ' + (passed ? 'pass' : 'warn');
+  const grounding = (quality.stats && quality.stats.grounding) || {};
+  const available = grounding.rules_available || 0;
+  const grounded = grounding.rules_grounded || 0;
+  const usedCorpus = !!data.corpus_used;
+
+  // Two separate judgements. A skill can be perfectly structured and still know nothing about
+  // the user's business, which is the case that used to report 100/100.
+  const structureOk = (quality.errors || []).length === 0;
+  const groundingOk = !usedCorpus || grounded > 0;
+  banner.className = 'wiz-quality-banner ' + (structureOk && groundingOk ? 'pass' : 'warn');
 
   let html = `<span class="score">Score: ${quality.score}/100</span>`;
-  if (rulesFound > 0) html += ` &middot; ${rulesFound} rule${rulesFound !== 1 ? 's' : ''} extracted from your documents`;
+  html += `<div class="dims">`;
+  html += `<div>${structureOk ? '&check;' : '&#9888;'} Structure: ${structureOk ? 'complete' : 'incomplete'}</div>`;
+
+  if (!usedCorpus) {
+    html += `<div>&mdash; Your documents: not used (corpus grounding is off for this skill)</div>`;
+  } else if (available === 0) {
+    html += `<div>&#9888; Your documents: <strong>no rules found</strong> &mdash; this skill contains no
+             information from your files, so it will not outperform a plain prompt.</div>`;
+  } else {
+    html += `<div>${grounded > 0 ? '&check;' : '&#9888;'} Your documents:
+             <strong>${grounded} of ${available}</strong> rule${available !== 1 ? 's' : ''} carried into the skill</div>`;
+  }
+  html += `</div>`;
+
+  if (data.pricing_config && data.pricing_config.tax_rate) {
+    const src = data.pricing_config.tax_source === 'price list'
+      ? 'read from your price list' : 'standard rate for this currency — check it';
+    html += `<div class="dims"><div>&check; ${data.pricing_config.tax_name}
+             ${data.pricing_config.tax_rate}% (${src})</div></div>`;
+  }
+
+  if (data.rules_error) {
+    html += `<div class="issues">&bull; ${data.rules_error}</div>`;
+  }
 
   const issues = [...(quality.errors || []), ...(quality.warnings || [])].slice(0, 3);
   if (issues.length > 0) {
     html += '<div class="issues">' + issues.map(i => '&bull; ' + i).join('<br>') + '</div>';
   }
 
+  if (available === 0 && usedCorpus) {
+    html += `<div class="issues">&bull; Upload the documents holding your rates, thresholds and
+             policies, re-ingest them, then generate this skill again.</div>`;
+  }
+
+  html += renderCategoryPicker(data);
   banner.innerHTML = html;
   banner.style.display = 'block';
+}
+
+function renderCategoryPicker(data) {
+  const cats = data.categories || [];
+  if (!cats.length) return '';
+  const current = data.category || 'none';
+  const guessed = data.category_source === 'detected';
+
+  let html = `<div class="cat-picker"><label for="wiz-category">Document type`;
+  html += guessed ? ` <span class="cat-hint">(our guess &mdash; change it if it is wrong)</span>` : ``;
+  html += `</label><select id="wiz-category" onchange="wizChangeCategory(this.value)">`;
+  html += `<option value="none"${current === 'none' ? ' selected' : ''}>No specific type</option>`;
+  for (const c of cats) {
+    const label = CATEGORY_LABELS[c] || c;
+    html += `<option value="${c}"${current === c ? ' selected' : ''}>${label}</option>`;
+  }
+  html += `</select> <button type="button" class="btn-sm" onclick="wizRegenerate()">Regenerate</button></div>`;
+  return html;
+}
+
+function wizChangeCategory(value) {
+  wizSelectedCategory = value;
+}
+
+async function wizRegenerate() {
+  // Step 2 is the draft step; stepping back and forward re-runs it with the chosen category.
+  wizStep = 2;
+  updateWizSteps();
+  await wizNext();
 }
 
 function wizPrev() {

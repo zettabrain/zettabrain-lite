@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS price_list_items (
     notes          TEXT    DEFAULT '',
     ingested_at    TEXT    DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS price_list_settings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_file TEXT    NOT NULL,
+    label       TEXT    NOT NULL,
+    kind        TEXT    DEFAULT '',
+    percent     REAL,
+    amount      REAL,
+    raw         TEXT    DEFAULT '',
+    ingested_at TEXT    DEFAULT (datetime('now'))
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS price_list_fts USING fts5(
     name,
     sku UNINDEXED,
@@ -160,6 +170,24 @@ def detect_columns(headers: list[str]) -> dict[str, int]:
     if "name" not in result or "price" not in result:
         return {}
     return result
+
+
+def currency_from_header(header: str) -> str:
+    """Extract an ISO currency code or symbol from a column header.
+
+    Spreadsheets store prices as bare numbers and name the currency in the header instead,
+    e.g. 'Base Price (NGN)' or 'Price (₦)'. Returns '' when no currency is named.
+    """
+    if not header:
+        return ""
+    text = str(header)
+    for sym, code in _CURRENCY_SYMBOLS.items():
+        if sym != "R" and sym in text:  # 'R' alone is too common in English headers
+            return code
+    for code in _CURRENCY_CODES:
+        if re.search(rf"\b{code}\b", text, re.IGNORECASE):
+            return code
+    return ""
 
 
 # ── Price value parsing ───────────────────────────────────────────────────────
@@ -356,11 +384,80 @@ def has_price_data(source_files: Optional[list[str]] = None) -> bool:
 
 
 def delete_source(source_file: str) -> int:
-    """Delete all items for a source file. Returns count deleted."""
+    """Delete all items and settings for a source file. Returns count of items deleted."""
     conn = get_price_db()
     try:
         cur = conn.execute("DELETE FROM price_list_items WHERE source_file = ?", (source_file,))
+        conn.execute("DELETE FROM price_list_settings WHERE source_file = ?", (source_file,))
         conn.commit()
         return cur.rowcount
     finally:
         conn.close()
+
+
+# ── Rates and settings (VAT, discounts, thresholds read from the source file) ──
+
+_TAX_KW = {"vat", "gst", "hst", "sales tax", "tax"}
+
+
+def upsert_settings(source_file: str, settings: list[dict]) -> int:
+    """Replace all settings for *source_file*. Each dict: label, kind, percent, amount, raw."""
+    conn = get_price_db()
+    try:
+        conn.execute("DELETE FROM price_list_settings WHERE source_file = ?", (source_file,))
+        count = 0
+        for s in settings:
+            label = str(s.get("label", "")).strip()
+            if not label:
+                continue
+            conn.execute(
+                """INSERT INTO price_list_settings (source_file, label, kind, percent, amount, raw)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    source_file,
+                    label,
+                    str(s.get("kind", "")).strip(),
+                    s.get("percent"),
+                    s.get("amount"),
+                    str(s.get("raw", "")).strip(),
+                ),
+            )
+            count += 1
+        conn.commit()
+        log.info("Price list settings upsert: %d rows for %s", count, source_file)
+        return count
+    finally:
+        conn.close()
+
+
+def get_settings(source_file: str = "") -> list[dict]:
+    """Return stored rate/threshold settings, optionally filtered by source_file."""
+    conn = get_price_db()
+    try:
+        if source_file:
+            rows = conn.execute(
+                "SELECT * FROM price_list_settings WHERE source_file = ? ORDER BY id", (source_file,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM price_list_settings ORDER BY source_file, id").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_tax_setting(source_file: str = "") -> Optional[dict]:
+    """Return the tax/VAT rate found in the source file, or None.
+
+    Looks for a settings row whose kind is 'tax'. Returns {'name': 'VAT', 'rate': 7.5}.
+    """
+    for row in get_settings(source_file):
+        if row.get("kind") != "tax" or row.get("percent") is None:
+            continue
+        label = str(row.get("label", ""))
+        name = "Tax"
+        for word in re.findall(r"[A-Za-z]+", label):
+            if word.lower() in _TAX_KW:
+                name = word.upper() if len(word) <= 3 else word.capitalize()
+                break
+        return {"name": name, "rate": float(row["percent"])}
+    return None

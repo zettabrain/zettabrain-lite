@@ -334,6 +334,12 @@
   .wiz-quality-banner.warn { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3); color: #d97706; }
   .wiz-quality-banner .score { font-weight: 700; font-size: 14px; }
   .wiz-quality-banner .issues { margin-top: 4px; font-size: 11px; opacity: 0.85; }
+  .wiz-quality-banner .dims { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .wiz-quality-banner .dims strong { font-weight: 700; }
+  .wiz-quality-banner .cat-picker { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(128,128,128,0.25); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .wiz-quality-banner .cat-picker label { font-size: 11px; font-weight: 600; }
+  .wiz-quality-banner .cat-picker .cat-hint { font-weight: 400; opacity: 0.75; }
+  .wiz-quality-banner .cat-picker select { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
   .skill-source-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; margin-left: 6px; vertical-align: middle; }
   .skill-source-badge.builtin { background: rgba(99,102,241,0.15); color: var(--accent2); }
   .skill-source-badge.user { background: rgba(34,197,94,0.15); color: var(--green); }

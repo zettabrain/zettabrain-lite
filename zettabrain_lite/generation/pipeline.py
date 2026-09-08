@@ -117,7 +117,7 @@ Extract the following from the corpus documents and user request. Output a singl
   "taxes": [
     {{
       "description": "tax name",
-      "rate_percent": <number, e.g. 5.3 for 5.3%>,
+      "rate_percent": <the tax rate as a number, taken from the corpus>,
       "source_ref": "which corpus document"
     }}
   ],
@@ -141,8 +141,9 @@ RULES:
 3. If a volume discount tier applies based on the ordered quantity matching a threshold in the corpus, set discount_percent and discount_reason.
 4. Include ALL applicable fees from the corpus (delivery, environmental, cylinder, service fees, etc.).
 5. If a value is not found in the corpus or user request, omit that item entirely. Do NOT invent prices.
-6. All numbers must be plain numbers with no dollar signs, commas, or currency symbols.
-7. Output ONLY the JSON object. No markdown fences, no explanation, no text before or after.
+6. Never copy a number from these instructions. Every figure must come from the corpus or the user request.
+7. All numbers must be plain numbers with no dollar signs, commas, or currency symbols.
+8. Output ONLY the JSON object. No markdown fences, no explanation, no text before or after.
 
 JSON:"""
 
@@ -179,6 +180,11 @@ Do NOT perform any arithmetic. Use the exact numbers provided.
 3. Follow the document structure from TASK INSTRUCTIONS exactly.
 4. Fill in customer information, dates, and boilerplate from the corpus and user request.
 5. If a value is marked [NEEDS INPUT], keep that marker in the output.
+6. Do NOT add any line item, fee, charge, surcharge, or tax that is absent from COMPUTED DATA. The line items,
+   fees and taxes listed there are the complete and final set. If the task instructions mention a charge that
+   COMPUTED DATA does not contain — delivery, installation, service, or anything else — write [NEEDS INPUT]
+   in place of the amount. Never estimate it, and never carry a figure over from the corpus.
+7. Do NOT introduce a total, subtotal, or discount that is not shown in COMPUTED DATA.
 
 Begin formatting the document now:"""
 

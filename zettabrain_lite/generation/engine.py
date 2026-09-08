@@ -81,9 +81,11 @@ class GenerationEngine:
         prompt_parts.append("# OUTPUT INSTRUCTIONS")
         prompt_parts.append("Generate the requested document following the task instructions above.")
         prompt_parts.append(
-            "IMPORTANT: Always generate the document. Never refuse a request. "
-            "If specific data is not available from corpus sources, "
-            "use reasonable placeholder estimates and mark them as 'ESTIMATED'."
+            "IMPORTANT: Always produce the document — never refuse the request. "
+            "But never invent a figure to fill a gap. If a number, rate, date, name, or amount is not "
+            "available from the corpus or the user request, write [NEEDS INPUT] in its place and continue. "
+            "A document with [NEEDS INPUT] markers is correct and useful; a document with an invented "
+            "figure is not. Do not estimate, approximate, or carry a number over from a similar item."
         )
 
         if skill.citation_required and corpus_context:

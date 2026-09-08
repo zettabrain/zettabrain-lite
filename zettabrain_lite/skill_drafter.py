@@ -42,16 +42,23 @@ _PROHIBITION_WORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Substantive knowledge is a figure, a named authority, or a bounded limit. Prohibitions are
+# deliberately NOT counted here — they have their own check, and counting them in both places
+# let a skill of generic "never do X" lines satisfy the corpus-knowledge requirement outright.
+_CURRENCY_CODES_RE = "USD|EUR|GBP|NGN|GHS|KES|ZAR|INR|JPY|CAD|AUD|CHF|CNY|SGD|AED"
+
 _KNOWLEDGE_LINE = re.compile(
     r"("
     r"\d+[\.,]?\d*\s*%"  # percentages
-    r"|\$\s*\d"  # dollar amounts
-    r"|\d{1,3}(?:,\d{3})+"  # large numbers with commas
+    r"|[$€£¥₦₹]\s*\d"  # amounts written with a currency symbol
+    rf"|\b(?:{_CURRENCY_CODES_RE})\s*\d"  # amounts written with an ISO code
+    rf"|\d\s*(?:{_CURRENCY_CODES_RE})\b"  # amounts with a trailing ISO code
+    r"|\d{1,3}(?:,\d{3})+"  # large numbers with thousands separators
+    r"|\b\d{4,}\b"  # bare large numbers (8500, 500000)
     r"|(?:approv|sign[- ]?off|authorize)\w*\s+(?:by|from|of)\b"  # named approvers
     r"|(?:VP|CEO|CFO|CTO|COO|Director|Manager|Head of|Lead)\b"  # role titles as approvers
-    r"|\b(?:never|must not|must never|prohibited|shall not|do not|don'?t)\b"  # prohibitions
-    r"|\b(?:at least|at most|no (?:more|fewer|less) than|minimum|maximum|cap(?:ped)? at|floor|ceiling)\b"  # thresholds
-    r"|\b\d+\s*(?:days?|hours?|weeks?|business days?|calendar days?)\b"  # time limits
+    r"|\b(?:at least|at most|no (?:more|fewer|less) than|minimum|maximum|cap(?:ped)? at)(?:\s+of)?\s+\d"  # limits
+    r"|\b\d+\s*(?:\w+\s+)?(?:days?|hours?|weeks?|months?)\b"  # time limits, incl. '10 working days'
     r")",
     re.IGNORECASE,
 )
@@ -158,7 +165,54 @@ def _is_slug(name: str) -> bool:
     return bool(re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", name))
 
 
-def validate_skill(content: str) -> QualityReport:
+_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "by", "is", "are",
+    "be", "must", "should", "shall", "will", "any", "all", "that", "this", "from", "at", "as",
+})
+
+
+def _significant_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in _STOPWORDS}
+
+
+def _numbers_in(text: str) -> set[str]:
+    """Numeric tokens with thousands separators normalised away."""
+    return {m.replace(",", "") for m in re.findall(r"\d[\d,]*(?:\.\d+)?", text)}
+
+
+def _rule_is_present(rule_text: str, content: str, content_numbers: set[str]) -> bool:
+    """True when the substance of an extracted rule survives into the generated skill.
+
+    A rule carrying figures is present when at least one of its figures appears. A rule with
+    no figures falls back to significant-word overlap, since the model may reword it.
+    """
+    rule_numbers = _numbers_in(rule_text)
+    if rule_numbers:
+        return bool(rule_numbers & content_numbers)
+    words = _significant_words(rule_text)
+    if not words:
+        return False
+    overlap = words & _significant_words(content)
+    return len(overlap) / len(words) >= 0.6
+
+
+def measure_grounding(content: str, rules: list[dict] | None) -> dict:
+    """Report how much of the extracted corpus knowledge reached the generated skill."""
+    rules = rules or []
+    content_numbers = _numbers_in(content)
+    present = [r for r in rules if _rule_is_present(r.get("rule", ""), content, content_numbers)]
+    missing = [r for r in rules if r not in present]
+    return {
+        "rules_available": len(rules),
+        "rules_grounded": len(present),
+        "ratio": (len(present) / len(rules)) if rules else 0.0,
+        "missing": [r.get("rule", "")[:120] for r in missing[:5]],
+    }
+
+
+def validate_skill(content: str, rules: list[dict] | None = None) -> QualityReport:
+    """Check a SKILL.md for structural completeness and, when *rules* are supplied,
+    for how much of the corpus knowledge actually reached the file."""
     errors: list[str] = []
     warnings: list[str] = []
     lines = content.splitlines()
@@ -232,6 +286,15 @@ def validate_skill(content: str) -> QualityReport:
     if rule_count < 10:
         warnings.append(f"Only {rule_count} specific rule(s) (aim for 10+)")
 
+    # --- Grounding: did the corpus knowledge actually reach the file? ---
+
+    grounding = measure_grounding(content, rules)
+    if grounding["rules_available"] and grounding["ratio"] < 0.5:
+        errors.append(
+            f"Only {grounding['rules_grounded']} of {grounding['rules_available']} rules found in your "
+            "documents made it into the skill — the rest were dropped or reworded past recognition"
+        )
+
     # --- Scoring ---
 
     score = 100
@@ -257,6 +320,13 @@ def validate_skill(content: str) -> QualityReport:
     for _w in warnings:
         score -= 2
 
+    # A skill carries no organisational knowledge unless something was drawn from the corpus.
+    # Structure alone cannot earn a high score — that is what made hollow skills score 100.
+    if requires_corpus and grounding["rules_available"] == 0:
+        score = min(score, 40)
+    elif grounding["rules_available"]:
+        score = min(score, 40 + int(60 * grounding["ratio"]))
+
     score = max(0, score)
 
     stats = {
@@ -269,6 +339,7 @@ def validate_skill(content: str) -> QualityReport:
         "rule_count": rule_count,
         "sections_found": [s for s in _REQUIRED_SECTIONS if s in headings],
         "sections_missing": missing_sections,
+        "grounding": grounding,
     }
 
     return QualityReport(
@@ -384,9 +455,24 @@ def _dedup_rules(rules: list[dict]) -> list[dict]:
     return result
 
 
-def extract_rules(llm_fn: Callable[[str], str], retriever: Any, max_rules: int = 25) -> list[dict]:
+def extract_rules(
+    llm_fn: Callable[[str], str],
+    retriever: Any,
+    max_rules: int = 25,
+    goal: str = "",
+) -> list[dict]:
+    """Pull organisation-specific rules out of the corpus.
+
+    The fixed probes below are governance vocabulary and retrieve poorly for corpora that do
+    not use it — a florist, a clinic, a single-partner law practice. Probing with the user's
+    own goal first is what surfaces domain rules the fixed probes miss.
+    """
+    queries = list(_PROBE_QUERIES)
+    if goal and goal.strip():
+        queries.insert(0, goal.strip())
+
     all_chunks: list[str] = []
-    for query in _PROBE_QUERIES:
+    for query in queries:
         try:
             context, _citations = retriever.get_context_for_generation(query, n_results=5)
             if context:
@@ -479,8 +565,12 @@ If a rule was not provided in the extracted rules below, do not fabricate one.
 Never guess.
 - Include at least one prohibition in Boundaries using "never", "must not", or "do not".
 - If requires_corpus is true, include an abstention rule: what to do when retrieval returns nothing.
-- The description must be at least 120 characters and include trigger phrasing ("Use this when...", \
-"Generate a...").
+- Write the frontmatter description yourself from the goal above. It is the only thing an agent \
+reads when deciding whether to use this skill, so it must name the specific document produced and \
+the situation that calls for it — at least 120 characters, with trigger phrasing ("Use this \
+when...", "Generate a..."). Never pad it with generic filler such as "Retrieve relevant corpus \
+documents and apply organizational rules"; a vague description makes the skill fire on the wrong \
+requests.
 - The file must be at least 60 lines.
 - Style section: do NOT combine contradictory directives (e.g., "formal" and "friendly").
 
@@ -719,22 +809,37 @@ def generate_skill_draft(
     rules: list[dict] | None = None,
     source_documents: list[str] | None = None,
     pricing_config: dict | None = None,
+    category: str | None = None,
 ) -> dict:
-    """Generate a skill draft. pricing_config={'currency': 'NGN', 'tax_name': 'VAT', 'tax_rate': 7.5}
-    is auto-detected from the price list DB and injected into frontmatter overrides for pricing skills."""
+    """Generate a skill draft.
+
+    pricing_config={'currency': 'NGN', 'tax_name': 'VAT', 'tax_rate': 7.5} is read from the price
+    list and injected into frontmatter overrides for pricing skills.
+
+    category names the document-type guidance to apply. When None it is guessed from the name and
+    goal; the guess is returned so the wizard can show it and let the user correct it.
+    """
     display_name = name or "Untitled Skill"
     name_slug = _to_slug(display_name)
     tone_list = tone or ["Professional"]
     sections = sections or []
 
-    description = goal
-    if len(description) < 120:
-        description = f"{goal}. Use this when you need to generate this type of document."
-    if len(description) < 120:
-        description += " Retrieve relevant corpus documents and apply organizational rules."
+    # The description is what an agent reads to decide whether to activate this skill, so
+    # padding a short goal with generic filler makes routing worse, not better. Ask the model
+    # to write a real one from the goal instead of appending boilerplate here.
+    description = goal.strip()
 
-    category = _detect_skill_category(display_name, goal)
-    category_config = _CATEGORY_CONFIGS.get(category) if category else None
+    # An explicit choice from the wizard always wins over the keyword guess. "none" means the
+    # user rejected the guess and wants no document-type guidance applied.
+    if category == "none":
+        resolved_category, category_source = None, "user"
+    elif category in _CATEGORY_CONFIGS:
+        resolved_category, category_source = category, "user"
+    else:
+        resolved_category = _detect_skill_category(display_name, goal)
+        category_source = "detected" if resolved_category else "none"
+
+    category_config = _CATEGORY_CONFIGS.get(resolved_category) if resolved_category else None
 
     extra_instructions = []
     if category_config:
@@ -767,7 +872,7 @@ def generate_skill_draft(
     if not content or len(content.strip()) < 50:
         raise ValueError("The model returned an empty or unusable response. Try again or use a different model.")
 
-    quality = validate_skill(content)
+    quality = validate_skill(content, rules)
 
     if not quality.passed:
         repair = _REPAIR_PROMPT.format(
@@ -776,8 +881,12 @@ def generate_skill_draft(
             content=content,
         )
         try:
-            content = llm_fn(repair)
-            quality = validate_skill(content)
+            repaired = llm_fn(repair)
+            repaired_quality = validate_skill(repaired, rules)
+            # A repair pass can regress — smaller models often drop sections while fixing one
+            # error. Keep whichever version actually scores better.
+            if repaired and repaired_quality.score > quality.score:
+                content, quality = repaired, repaired_quality
         except Exception:
             log.debug("Repair attempt failed", exc_info=True)
 
@@ -793,4 +902,7 @@ def generate_skill_draft(
         "quality": quality.as_dict(),
         "rules": rules or [],
         "rules_found": len(rules) if rules else 0,
+        "category": resolved_category or "none",
+        "category_source": category_source,
+        "categories": sorted(_CATEGORY_CONFIGS.keys()),
     }

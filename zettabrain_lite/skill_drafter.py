@@ -253,6 +253,18 @@ def validate_skill(content: str, rules: list[dict] | None = None) -> QualityRepo
         if tones & group_a and tones & group_b:
             errors.append(f"Contradictory style directives: {', '.join(tones & group_a)} conflicts with {', '.join(tones & group_b)}")
 
+    # The save path rejects a skill missing any of these, so catch it here where the repair
+    # pass can still fix it, rather than at save time with a parser message.
+    if not meta:
+        errors.append(
+            "No frontmatter block found — the file must open with a --- block containing "
+            "name, version and description"
+        )
+    else:
+        for required in ("name", "version"):
+            if not meta.get(required):
+                errors.append(f"Frontmatter is missing '{required}'")
+
     description = meta.get("description", "")
     if len(description) < 120:
         errors.append(f"Description is only {len(description)} characters (minimum 120)")
@@ -307,6 +319,9 @@ def validate_skill(content: str, rules: list[dict] | None = None) -> QualityRepo
         "Contradictory": 10,
         "Description is": 5,
     }
+    error_weights["No frontmatter"] = 25
+    error_weights["Frontmatter is missing"] = 15
+
     for err in errors:
         deducted = False
         for prefix, weight in error_weights.items():
@@ -537,6 +552,17 @@ MAX TOKENS: {max_tokens}
 
 Write the complete SKILL.md file with YAML frontmatter and markdown body.
 
+The file must BEGIN with a frontmatter block delimited by three hyphens, exactly like this:
+
+---
+name: {name_slug}
+version: 0.1.0
+description: ...
+---
+
+Do NOT write the frontmatter inside a ```yaml code block, and do NOT wrap the file in a \
+code fence. The first characters of your response must be the three hyphens.
+
 REQUIRED STRUCTURE — include ALL of these sections:
 - ## Retrieval Order (how to query the corpus, numbered steps)
 - ## Rules (specific, enforceable rules — every extracted rule below MUST appear here verbatim)
@@ -589,6 +615,8 @@ ORIGINAL SKILL:
 {content}
 
 Fix every error listed above. Pay special attention to:
+- The file must start with a --- frontmatter block containing name, version and description.
+  Never put the frontmatter in a ```yaml block and never wrap the file in a code fence.
 - Replace any hollow instructions ("Write the X section...") with specific, actionable directives
 - Add missing sections (Retrieval Order, Rules, Boundaries, Output Structure, Self-Check)
 - Add prohibitions using "never", "must not", or "do not"
@@ -784,10 +812,59 @@ def _detect_skill_category(name: str, goal: str) -> str | None:
     return None
 
 
+_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*$")
+
+
+def _unwrap_outer_fence(lines: list[str]) -> list[str]:
+    """Drop a code fence that wraps the whole document."""
+    if len(lines) >= 2 and _FENCE_RE.match(lines[0]) and lines[-1].strip() == "```":
+        inner = lines[1:-1]
+        # Only unwrap when the fence really spans the document, i.e. nothing closes it earlier.
+        if not any(line.strip() == "```" for line in inner):
+            return inner
+    return lines
+
+
+def normalise_skill_output(content: str) -> str:
+    """Repair the markdown wrappers models put around a SKILL.md.
+
+    Models frequently emit the frontmatter as a ```yaml block instead of a --- block, or
+    wrap the whole file in a fence. Left alone, python-frontmatter sees no frontmatter at
+    all and the skill is saved without its name, version and description.
+    """
+    if not content:
+        return content
+
+    lines = _unwrap_outer_fence(content.strip().splitlines())
+
+    # Frontmatter emitted as a fenced block at the top: convert it to a --- block.
+    if lines and _FENCE_RE.match(lines[0]):
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "```":
+                block = lines[1:i]
+                if any(re.match(r"^\s*name\s*:", line) for line in block):
+                    lines = ["---", *block, "---", *lines[i + 1:]]
+                break
+
+    # A stray closing fence left at the end once the opener has been consumed.
+    while lines and lines[-1].strip() == "```":
+        lines.pop()
+
+    return "\n".join(lines).strip()
+
+
 def _force_frontmatter_overrides(content: str, overrides: dict) -> str:
-    """Programmatically set frontmatter values after LLM generation."""
+    """Set frontmatter values after generation, without inventing a frontmatter block.
+
+    If the model produced no frontmatter, writing one here would manufacture a file whose
+    only metadata is the overrides — no name, no version — which then fails at save time
+    with a confusing message. Leave it alone so validation reports the real problem.
+    """
     try:
         post = frontmatter.loads(content)
+        if not post.metadata:
+            log.warning("Generated skill has no frontmatter; not injecting overrides")
+            return content
         for key, value in overrides.items():
             post.metadata[key] = value
         return frontmatter.dumps(post)
@@ -868,7 +945,7 @@ def generate_skill_draft(
     if extra_instructions:
         prompt += "\n\n" + "\n\n".join(extra_instructions)
 
-    content = llm_fn(prompt)
+    content = normalise_skill_output(llm_fn(prompt))
     if not content or len(content.strip()) < 50:
         raise ValueError("The model returned an empty or unusable response. Try again or use a different model.")
 
@@ -881,7 +958,7 @@ def generate_skill_draft(
             content=content,
         )
         try:
-            repaired = llm_fn(repair)
+            repaired = normalise_skill_output(llm_fn(repair))
             repaired_quality = validate_skill(repaired, rules)
             # A repair pass can regress — smaller models often drop sections while fixing one
             # error. Keep whichever version actually scores better.

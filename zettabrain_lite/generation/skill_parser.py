@@ -20,13 +20,34 @@ class SkillParser:
         metadata = post.metadata
         instructions = post.content
 
-        required_fields = ["name", "version", "description"]
-        for field in required_fields:
-            if not metadata.get(field):
-                raise ValueError(f"Skill must have '{field}' field in frontmatter")
+        # Wording is aimed at the person editing the skill in the wizard, not at a developer.
+        if not metadata:
+            raise ValueError(
+                "This skill has no settings block. The file must start with a line of three "
+                "hyphens, then name, version and description, then another line of three "
+                "hyphens. Check the top of the skill and try again."
+            )
+
+        _FIELD_HELP = {
+            "name": "a short name in lowercase with hyphens, for example flower-quote",
+            "version": "a version number, for example 0.1.0",
+            "description": "a sentence saying what this skill produces and when to use it",
+        }
+        missing = [f for f in ("name", "version", "description") if not metadata.get(f)]
+        if missing:
+            details = "; ".join(f"{f} — {_FIELD_HELP[f]}" for f in missing)
+            raise ValueError(
+                f"The settings at the top of this skill are missing {len(missing)} entry "
+                f"({details})." if len(missing) == 1 else
+                f"The settings at the top of this skill are missing {len(missing)} entries "
+                f"({details})."
+            )
 
         if not instructions or len(instructions.strip()) < 50:
-            raise ValueError("Skill instructions must be at least 50 characters")
+            raise ValueError(
+                "This skill has almost no instructions. Add the steps it should follow "
+                "below the settings block."
+            )
 
         skill_data = {
             "name": metadata["name"],

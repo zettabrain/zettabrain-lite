@@ -1,8 +1,12 @@
 """Unit tests for the skill quality gate and corpus grounding measurement."""
 
+import frontmatter
+
 from zettabrain_lite.skill_drafter import (
     _KNOWLEDGE_LINE,
+    _force_frontmatter_overrides,
     measure_grounding,
+    normalise_skill_output,
     validate_skill,
 )
 
@@ -177,3 +181,111 @@ class TestValidateSkill:
         """Existing callers that pass only content must keep working."""
         report = validate_skill(GROUNDED_SKILL)
         assert report.stats["grounding"]["rules_available"] == 0
+
+
+# ── Markdown wrapper repair ───────────────────────────────────────────────────
+
+FENCED_FRONTMATTER = """```yaml
+name: flower-invoice
+version: 0.1.0
+description: Generate a pricing quote with line items, totals and payment terms from our rate card. Use this when a customer asks for a formal quote for floral services.
+requires_corpus: True
+source_documents:
+  - flower_price_list.xlsx
+```
+
+## Rules
+- Bulk order threshold is 500,000.
+```"""
+
+WHOLE_FILE_FENCED = """```markdown
+---
+name: flower-invoice
+version: 0.1.0
+description: Generate a pricing quote with line items, totals and payment terms from our rate card. Use this when a customer asks for a formal quote for floral services.
+---
+
+## Rules
+- Bulk order threshold is 500,000.
+```"""
+
+BODY_WITH_CODE_BLOCK = """---
+name: api-doc
+version: 0.1.0
+description: Generate API reference documentation from the corpus, including endpoints, request and response examples. Use this when documenting a service interface.
+---
+
+## Output Structure
+
+Show the request like this:
+
+```json
+{"id": 1}
+```
+
+Then the response.
+"""
+
+
+class TestNormaliseSkillOutput:
+    def test_fenced_frontmatter_becomes_real_frontmatter(self):
+        """The model writes ```yaml instead of ---, so the skill saved with no name."""
+        out = normalise_skill_output(FENCED_FRONTMATTER)
+        meta = frontmatter.loads(out).metadata
+        assert meta["name"] == "flower-invoice"
+        assert meta["version"] == "0.1.0"
+        assert meta["source_documents"] == ["flower_price_list.xlsx"]
+
+    def test_trailing_orphan_fence_removed(self):
+        out = normalise_skill_output(FENCED_FRONTMATTER)
+        assert not out.rstrip().endswith("```")
+
+    def test_whole_file_fence_unwrapped(self):
+        out = normalise_skill_output(WHOLE_FILE_FENCED)
+        assert out.startswith("---")
+        assert frontmatter.loads(out).metadata["name"] == "flower-invoice"
+
+    def test_correct_file_is_left_alone(self):
+        already_fine = "---\nname: x\nversion: 1\ndescription: y\n---\n\n## Rules\n- A rule.\n"
+        assert normalise_skill_output(already_fine) == already_fine.strip()
+
+    def test_code_blocks_in_the_body_survive(self):
+        """A skill may legitimately contain fenced examples; they must not be stripped."""
+        out = normalise_skill_output(BODY_WITH_CODE_BLOCK)
+        assert '```json' in out
+        assert '{"id": 1}' in out
+        assert frontmatter.loads(out).metadata["name"] == "api-doc"
+
+    def test_empty_input(self):
+        assert normalise_skill_output("") == ""
+
+
+class TestForceFrontmatterOverrides:
+    def test_does_not_invent_a_frontmatter_block(self):
+        """Inventing one produced a file whose only metadata was the overrides."""
+        out = _force_frontmatter_overrides(FENCED_FRONTMATTER, {"currency": "NGN"})
+        assert frontmatter.loads(out).metadata == {}
+
+    def test_applies_overrides_when_frontmatter_exists(self):
+        fixed = normalise_skill_output(FENCED_FRONTMATTER)
+        out = _force_frontmatter_overrides(fixed, {"currency": "NGN", "tax_rate": 7.5})
+        meta = frontmatter.loads(out).metadata
+        assert meta["currency"] == "NGN"
+        assert meta["tax_rate"] == 7.5
+        assert meta["name"] == "flower-invoice"
+
+
+class TestRequiredFrontmatterFields:
+    def test_missing_frontmatter_is_an_error(self):
+        report = validate_skill("## Rules\n- A rule.\n")
+        assert not report.passed
+        assert any("No frontmatter block" in e for e in report.errors)
+
+    def test_missing_name_is_an_error(self):
+        content = "---\nversion: 1.0.0\ndescription: " + ("x" * 130) + "\n---\n\n## Rules\n- A rule.\n"
+        report = validate_skill(content)
+        assert any("missing 'name'" in e for e in report.errors)
+
+    def test_complete_frontmatter_raises_no_field_error(self):
+        report = validate_skill(GROUNDED_SKILL, CORPUS_RULES)
+        assert not any("frontmatter" in e.lower() for e in report.errors)

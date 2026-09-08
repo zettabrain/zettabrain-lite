@@ -1593,9 +1593,14 @@ async def upload_skill(body: SkillUploadBody, _user: str = Depends(_require_auth
     import tempfile
 
     from .generation.skill_parser import SkillParser
+    from .skill_drafter import normalise_skill_output, validate_skill
+
+    # Repair the code fences models wrap around a SKILL.md, so a skill that is correct apart
+    # from its wrapper saves instead of being rejected.
+    content = normalise_skill_output(body.content)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as tmp:
-        tmp.write(body.content)
+        tmp.write(content)
         tmp_path = tmp.name
 
     try:
@@ -1609,11 +1614,9 @@ async def upload_skill(body: SkillUploadBody, _user: str = Depends(_require_auth
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     filename = body.filename if body.filename.endswith(".md") else f"{body.filename}.md"
     skill_path = SKILLS_DIR / filename
-    skill_path.write_text(body.content, encoding="utf-8")
+    skill_path.write_text(content, encoding="utf-8")
 
-    from .skill_drafter import validate_skill
-
-    quality = validate_skill(body.content).as_dict()
+    quality = validate_skill(content).as_dict()
 
     return {
         "message": f"Skill '{skill.name}' uploaded",

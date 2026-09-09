@@ -27,6 +27,9 @@ class IdentifiedRequest(BaseModel):
     items: list[IdentifiedItem] = Field(default_factory=list)
     customer: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # What the customer says their account is ("corporate", "trade", ...). The rate itself is
+    # never taken from the model — it is looked up from the price list by this name.
+    account_type: str = ""
 
 # ── Extraction Schema ─────────────────────────────────────────────────────────
 
@@ -53,10 +56,27 @@ class TaxSpec(BaseModel):
     source_ref: str = ""
 
 
+class LineDiscountSpec(BaseModel):
+    """An account-tier rate applied to every line, as the price list's tier columns do."""
+
+    description: str
+    rate_percent: Decimal
+
+
+class OrderDiscount(BaseModel):
+    """A discount applied to the order as a whole rather than to a single line."""
+
+    description: str
+    rate_percent: Decimal
+    threshold: Decimal = Decimal("0")  # only applies once the subtotal reaches this
+    source_ref: str = ""
+
+
 class ExtractedData(BaseModel):
     line_items: list[LineItem] = Field(default_factory=list)
     fees: list[FeeItem] = Field(default_factory=list)
     taxes: list[TaxSpec] = Field(default_factory=list)
+    order_discounts: list[OrderDiscount] = Field(default_factory=list)
     customer: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
     currency: str = ""  # ISO 4217 code detected from price list DB or skill frontmatter
@@ -69,6 +89,7 @@ class ComputedResult(BaseModel):
     line_details: list[dict[str, Any]]
     fee_details: list[dict[str, Any]]
     tax_details: list[dict[str, Any]]
+    order_discount_details: list[dict[str, Any]] = Field(default_factory=list)
     product_subtotal: Decimal
     total_discounts: Decimal
     discounted_subtotal: Decimal
@@ -158,20 +179,30 @@ Every number must be a plain number (no dollar signs, no commas). Output ONLY th
 JSON:"""
 
 
-_FORMAT_PROMPT = """You are formatting a document. All monetary calculations have already been done for you.
-Your job is ONLY to format the data below into the document structure specified in the task instructions.
-Do NOT perform any arithmetic. Use the exact numbers provided.
+_FORMAT_PROMPT = """You are writing the final document. All monetary calculations are already done.
+Your job is to write the document described in the task instructions, using the supplied values.
+Do NOT perform any arithmetic.
+
+Today's date is {today}. Use it for any date the document needs. Never invent a different date.
+
+# YOUR ORGANISATION (the sender of this document)
+{business_identity}
 
 # TASK INSTRUCTIONS
 {skill_instructions}
 
-# CORPUS DOCUMENTS (for reference — terms, conditions, contact info, boilerplate)
+# CORPUS DOCUMENTS (for reference — terms, conditions, boilerplate)
 {corpus_context}
 
 # USER REQUEST
 {user_input}
 
-# COMPUTED DATA — use these exact numbers, do NOT recalculate
+# COMPUTED FIGURES — reference data, NOT document text
+The block below is a set of values for you to use. It is NOT part of the document and its
+layout is NOT a template. Never copy its keys, its uppercase headings, its "item_1.xxx" names
+or its structure into your output. Read the values, then present them in the format the task
+instructions describe.
+
 {computed_summary}
 
 # FORMATTING RULES
@@ -180,13 +211,19 @@ Do NOT perform any arithmetic. Use the exact numbers provided.
 3. Follow the document structure from TASK INSTRUCTIONS exactly.
 4. Fill in customer information, dates, and boilerplate from the corpus and user request.
 5. If a value is marked [NEEDS INPUT], keep that marker in the output.
-6. Do NOT add any line item, fee, charge, surcharge, or tax that is absent from COMPUTED DATA. The line items,
-   fees and taxes listed there are the complete and final set. If the task instructions mention a charge that
-   COMPUTED DATA does not contain — delivery, installation, service, or anything else — write [NEEDS INPUT]
-   in place of the amount. Never estimate it, and never carry a figure over from the corpus.
-7. Do NOT introduce a total, subtotal, or discount that is not shown in COMPUTED DATA.
+6. Do NOT add any line item, fee, charge, surcharge, or tax that is absent from COMPUTED FIGURES. The items,
+   fees, discounts and taxes listed there are the complete and final set. If the task instructions mention a
+   charge that COMPUTED FIGURES does not contain — delivery, installation, service, or anything else — write
+   [NEEDS INPUT] in place of the amount. Never estimate it, and never carry a figure over from the corpus.
+7. Do NOT introduce a total, subtotal, or discount that is not shown in COMPUTED FIGURES.
+8. Never state or imply that a discount, rate or adjustment was applied unless it appears in ORDER_DISCOUNTS
+   or as a line item discount. If the customer asked for a rate that is not there, say plainly that it has
+   not been applied. Never write "corporate rate applied" when no discount appears in the figures.
+9. Write the document once. Do not repeat a section, restate the totals in a second block, or append a
+   summary of the values you were given.
+10. Do not include a workings or calculation-summary section. The reader wants the figures, not the steps.
 
-Begin formatting the document now:"""
+Begin writing the document now:"""
 
 
 # ── JSON Parsing ──────────────────────────────────────────────────────────────
@@ -239,6 +276,29 @@ def _sym(currency: str) -> str:
     return _ISO_TO_SYM.get(currency.upper(), "")
 
 
+def money(amount: Decimal | str | float, currency: str = "") -> str:
+    """Format an amount for display: 420000 → '₦420,000.00'.
+
+    Prices arrive from SQLite as floats, so str() alone yields '420000.0'. Thousands
+    separators matter on documents a customer reads.
+    """
+    try:
+        value = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return str(amount)
+    prefix = _sym(currency) or (f"{currency.upper()} " if currency else "")
+    return f"{prefix}{value.quantize(TWO_PLACES, rounding=ROUND_HALF_UP):,.2f}"
+
+
+def qty(amount: Decimal | str | float) -> str:
+    """Format a quantity without trailing zeros: 3.0 → '3', 2.5 → '2.5'."""
+    try:
+        value = Decimal(str(amount)).normalize()
+    except (InvalidOperation, TypeError, ValueError):
+        return str(amount)
+    return f"{value:f}"
+
+
 # ── Computation ───────────────────────────────────────────────────────────────
 
 TWO_PLACES = Decimal("0.01")
@@ -253,19 +313,25 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
     """Deterministic arithmetic on extracted data. All currency in Decimal."""
     log: list[str] = []
     line_details: list[dict[str, Any]] = []
-    s = _sym(extracted.currency)  # currency symbol for log strings
+    cur = extracted.currency
 
     product_subtotal = Decimal("0")
     total_discounts = Decimal("0")
 
     for i, item in enumerate(extracted.line_items, 1):
         line_total = _q(item.quantity * item.unit_price)
-        log.append(f"Line {i}: {item.quantity} {item.unit} x {s}{item.unit_price} = {s}{line_total}")
+        log.append(
+            f"Line {i}: {qty(item.quantity)} {item.unit} x {money(item.unit_price, cur)} "
+            f"= {money(line_total, cur)}"
+        )
 
         discount_amount = Decimal("0")
         if item.discount_percent > 0:
             discount_amount = _q(line_total * item.discount_percent / Decimal("100"))
-            log.append(f"  Discount: {item.discount_percent}% = -{s}{discount_amount} ({item.discount_reason})")
+            log.append(
+                f"  Discount: {qty(item.discount_percent)}% = -{money(discount_amount, cur)} "
+                f"({item.discount_reason})"
+            )
 
         net_total = line_total - discount_amount
         product_subtotal += line_total
@@ -285,10 +351,33 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
         })
 
     discounted_subtotal = product_subtotal - total_discounts
-    log.append(f"Product subtotal: {s}{product_subtotal}")
+    log.append(f"Product subtotal: {money(product_subtotal, cur)}")
     if total_discounts > 0:
-        log.append(f"Total discounts: -{s}{total_discounts}")
-        log.append(f"Discounted subtotal: {s}{discounted_subtotal}")
+        log.append(f"Line discounts: -{money(total_discounts, cur)}")
+        log.append(f"Subtotal after line discounts: {money(discounted_subtotal, cur)}")
+
+    # Order-level discounts (bulk tiers and similar) apply to the discounted subtotal.
+    order_discount_details: list[dict[str, Any]] = []
+    for od in extracted.order_discounts:
+        if od.threshold > 0 and discounted_subtotal < od.threshold:
+            log.append(
+                f"{od.description} not applied: subtotal {money(discounted_subtotal, cur)} "
+                f"is below the {money(od.threshold, cur)} threshold"
+            )
+            continue
+        amount = _q(discounted_subtotal * od.rate_percent / Decimal("100"))
+        total_discounts += amount
+        discounted_subtotal -= amount
+        order_discount_details.append({
+            "description": od.description,
+            "rate_percent": str(od.rate_percent),
+            "amount": str(amount),
+            "source_ref": od.source_ref,
+        })
+        log.append(
+            f"{od.description}: {qty(od.rate_percent)}% = -{money(amount, cur)} "
+            f"(subtotal now {money(discounted_subtotal, cur)})"
+        )
 
     total_fees = Decimal("0")
     fee_details: list[dict[str, Any]] = []
@@ -300,10 +389,10 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
             "amount": str(amount),
             "source_ref": fee.source_ref,
         })
-        log.append(f"Fee: {fee.description} = {s}{amount}")
+        log.append(f"Fee: {fee.description} = {money(amount, cur)}")
 
     subtotal_before_tax = discounted_subtotal + total_fees
-    log.append(f"Subtotal before tax: {s}{subtotal_before_tax}")
+    log.append(f"Subtotal before tax: {money(subtotal_before_tax, cur)}")
 
     total_tax = Decimal("0")
     tax_details: list[dict[str, Any]] = []
@@ -318,15 +407,19 @@ def compute_totals(extracted: ExtractedData) -> ComputedResult:
             "tax_amount": str(tax_amount),
             "source_ref": tax.source_ref,
         })
-        log.append(f"Tax: {tax.description} ({tax.rate_percent}% of {s}{tax_base}) = {s}{tax_amount}")
+        log.append(
+            f"Tax: {tax.description} ({qty(tax.rate_percent)}% of {money(tax_base, cur)}) "
+            f"= {money(tax_amount, cur)}"
+        )
 
     grand_total = _q(subtotal_before_tax + total_tax)
-    log.append(f"GRAND TOTAL: {s}{grand_total}")
+    log.append(f"GRAND TOTAL: {money(grand_total, cur)}")
 
     return ComputedResult(
         line_details=line_details,
         fee_details=fee_details,
         tax_details=tax_details,
+        order_discount_details=order_discount_details,
         product_subtotal=_q(product_subtotal),
         total_discounts=_q(total_discounts),
         discounted_subtotal=_q(discounted_subtotal),
@@ -405,57 +498,83 @@ def build_repair_prompt(raw_output: str) -> str:
 
 
 def build_computed_summary(computed: ComputedResult) -> str:
-    """Format computed results into a human-readable block for the format prompt."""
-    s = _sym(computed.currency)
-    currency_label = f"{computed.currency} ({s})" if computed.currency else "unknown"
+    """Render computed results as a data block for the format prompt.
 
-    parts = [f"## Currency\n{currency_label} — use this symbol for ALL monetary amounts. Never use a different currency symbol.\n"]
+    Deliberately NOT markdown. An earlier version used '##' headings and a markdown table,
+    and small models reproduced it into the customer's document verbatim — headings, internal
+    calculation log and all. Data-shaped text with uppercase keys does not read as a finished
+    document, so the model has to transform it rather than copy it. The calculation log is
+    withheld from the prompt entirely; it is internal and is kept in the result metadata.
+    """
+    cur = computed.currency
+    lines = [f"CURRENCY: {cur or 'unknown'} — render every amount in this currency, no other."]
 
-    parts.append("## Customer")
-    for key, val in computed.customer.items():
-        if val:
-            parts.append(f"- {key}: {val}")
+    if computed.customer:
+        lines.append("")
+        lines.append("CUSTOMER")
+        for key, val in computed.customer.items():
+            if val:
+                lines.append(f"  {key} = {val}")
 
-    parts.append("\n## Line Items")
-    parts.append("| # | Description | Qty | Unit | Unit Price | Line Total | Discount | Net |")
-    parts.append("|---|-------------|-----|------|------------|------------|----------|-----|")
+    lines.append("")
+    lines.append("LINE_ITEMS")
     for i, ld in enumerate(computed.line_details, 1):
-        disc = f"-{s}{ld['discount_amount']}" if Decimal(ld["discount_amount"]) > 0 else "-"
-        parts.append(
-            f"| {i} | {ld['description']} | {ld['quantity']} | {ld['unit']} "
-            f"| {s}{ld['unit_price']} | {s}{ld['line_total']} | {disc} | {s}{ld['net_total']} |"
-        )
+        lines.append(f"  item_{i}.description = {ld['description']}")
+        lines.append(f"  item_{i}.quantity    = {qty(ld['quantity'])}")
+        if ld.get("unit"):
+            lines.append(f"  item_{i}.unit        = {ld['unit']}")
+        lines.append(f"  item_{i}.unit_price  = {money(ld['unit_price'], cur)}")
+        if Decimal(ld["discount_amount"]) > 0:
+            lines.append(
+                f"  item_{i}.discount    = {qty(ld['discount_percent'])}% "
+                f"(-{money(ld['discount_amount'], cur)}) {ld.get('discount_reason', '')}".rstrip()
+            )
+        lines.append(f"  item_{i}.line_total  = {money(ld['net_total'], cur)}")
+
+    if computed.order_discount_details:
+        lines.append("")
+        lines.append("ORDER_DISCOUNTS  (show each as its own row in the totals)")
+        for i, od in enumerate(computed.order_discount_details, 1):
+            lines.append(
+                f"  discount_{i} = {od['description']} | {qty(od['rate_percent'])}% "
+                f"| -{money(od['amount'], cur)}"
+            )
 
     if computed.fee_details:
-        parts.append("\n## Fees")
-        for fd in computed.fee_details:
-            parts.append(f"- {fd['description']}: {s}{fd['amount']}")
+        lines.append("")
+        lines.append("FEES")
+        for i, fd in enumerate(computed.fee_details, 1):
+            lines.append(f"  fee_{i} = {fd['description']} | {money(fd['amount'], cur)}")
 
     if computed.tax_details:
-        parts.append("\n## Taxes")
-        for td in computed.tax_details:
-            parts.append(f"- {td['description']}: {td['rate_percent']}% of {s}{td['tax_base']} = {s}{td['tax_amount']}")
+        lines.append("")
+        lines.append("TAXES")
+        for i, td in enumerate(computed.tax_details, 1):
+            lines.append(
+                f"  tax_{i} = {td['description']} | {qty(td['rate_percent'])}% of "
+                f"{money(td['tax_base'], cur)} | {money(td['tax_amount'], cur)}"
+            )
 
-    parts.append("\n## Calculation Summary")
-    for line in computed.computation_log:
-        parts.append(line)
+    lines.append("")
+    lines.append("TOTALS")
+    lines.append(f"  subtotal      = {money(computed.product_subtotal, cur)}")
+    if computed.total_discounts > 0:
+        lines.append(f"  discounts     = -{money(computed.total_discounts, cur)}")
+    if computed.total_fees > 0:
+        lines.append(f"  fees          = {money(computed.total_fees, cur)}")
+    if computed.total_tax > 0:
+        lines.append(f"  tax           = {money(computed.total_tax, cur)}")
+    lines.append(f"  GRAND_TOTAL   = {money(computed.grand_total, cur)}")
 
-    if computed.metadata:
-        delivery_info = []
-        if computed.metadata.get("delivery_address"):
-            delivery_info.append(f"Delivery address: {computed.metadata['delivery_address']}")
-        if computed.metadata.get("delivery_speed"):
-            delivery_info.append(f"Delivery speed: {computed.metadata['delivery_speed']}")
-        if computed.metadata.get("delivery_zone"):
-            delivery_info.append(f"Delivery zone: {computed.metadata['delivery_zone']}")
-        if computed.metadata.get("notes"):
-            delivery_info.append(f"Notes: {computed.metadata['notes']}")
-        if delivery_info:
-            parts.append("\n## Delivery & Notes")
-            for info in delivery_info:
-                parts.append(f"- {info}")
+    meta_keys = ("delivery_address", "delivery_speed", "delivery_zone", "notes")
+    supplied = [(k, computed.metadata.get(k)) for k in meta_keys if computed.metadata.get(k)]
+    if supplied:
+        lines.append("")
+        lines.append("REQUEST_DETAILS")
+        for key, val in supplied:
+            lines.append(f"  {key} = {val}")
 
-    return "\n".join(parts)
+    return "\n".join(lines)
 
 
 def build_format_prompt(
@@ -463,15 +582,21 @@ def build_format_prompt(
     corpus_context: str,
     user_input: str,
     computed: ComputedResult,
+    business_identity: str = "",
+    today: str = "",
 ) -> str:
+    from datetime import datetime  # noqa: PLC0415
+
     summary = build_computed_summary(computed)
-    s = _sym(computed.currency)
     return _FORMAT_PROMPT.format(
         skill_instructions=skill_instructions,
         corpus_context=corpus_context or "(no additional corpus context)",
         user_input=user_input,
         computed_summary=summary,
-        grand_total=f"{s}{computed.grand_total}",
+        grand_total=money(computed.grand_total, computed.currency),
+        business_identity=business_identity or "(not configured — write [NEEDS INPUT] where the "
+        "document needs your organisation's name or contact details)",
+        today=today or datetime.now().strftime("%d %B %Y"),
     )
 
 
@@ -500,17 +625,21 @@ Extract what was ordered. Output a single JSON object with these keys:
     "address": "address if given",
     "phone": "phone if given"
   }},
+  "account_type": "the pricing tier the customer says they are on, in one lowercase word, e.g. corporate, trade, wholesale, retail. Empty string if they do not mention one.",
   "metadata": {{
     "delivery_address": "delivery address if different from customer address, else empty",
-    "notes": "payment terms, account type, start date, billing cycle, or other requirements"
+    "notes": "payment terms, start date, billing cycle, or other requirements"
   }}
 }}
 
 RULES:
 1. List ONLY products/services explicitly requested — do not add extras.
-2. Convert word quantities to numbers ("three floors" → 3, "a pair" → 2).
-3. Do NOT estimate or invent prices, unit costs, fees, or taxes.
-4. Output ONLY the JSON object. No markdown, no explanation.
+2. Include delivery, installation or call-out as an item when the customer asks for it, using
+   their own words ("delivery to Victoria Island"). Its price is looked up like any other item.
+3. Convert word quantities to numbers ("three floors" → 3, "a pair" → 2).
+4. Do NOT estimate or invent prices, unit costs, discount rates, fees, or taxes. account_type
+   records only what the customer claims — never a percentage.
+5. Output ONLY the JSON object. No markdown, no explanation.
 
 JSON:"""
 
@@ -545,6 +674,67 @@ def parse_identification(raw: str) -> Optional[IdentifiedRequest]:
     return req
 
 
+_STOP = {"the", "and", "of", "or", "a", "an", "above", "orders", "order", "value", "rate", "applied"}
+
+
+def _label_words(label: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", label.lower()) if len(w) > 2 and w not in _STOP}
+
+
+def build_order_discounts(
+    account_type: str,
+    source_file: str,
+) -> tuple[list[OrderDiscount], list[LineDiscountSpec], list[str]]:
+    """Derive discounts from rates stated in the user's own price list.
+
+    Rates are never taken from the model. The customer's claimed account type is matched by
+    name against the discount labels the user wrote in their file, and threshold-based
+    discounts are paired with a threshold row that shares wording with them.
+
+    Returns (order_discounts, line_discounts, notes).
+    """
+    from ..price_list import get_settings  # noqa: PLC0415
+
+    settings = get_settings(source_file)
+    discounts = [s for s in settings if s.get("kind") == "discount" and s.get("percent") is not None]
+    thresholds = [s for s in settings if s.get("kind") == "threshold" and s.get("amount") is not None]
+
+    order: list[OrderDiscount] = []
+    line: list[LineDiscountSpec] = []
+    notes: list[str] = []
+
+    account = account_type.strip().lower()
+    for setting in discounts:
+        words = _label_words(setting["label"])
+        matched_threshold = next(
+            (t for t in thresholds if _label_words(t["label"]) & words), None
+        )
+        if matched_threshold:
+            # A tiered discount: Python decides whether the subtotal reaches the threshold.
+            order.append(OrderDiscount(
+                description=setting["label"],
+                rate_percent=Decimal(str(setting["percent"])),
+                threshold=Decimal(str(matched_threshold["amount"])),
+                source_ref=source_file,
+            ))
+        elif account and account in words:
+            # An account-tier rate, applied per line the way the price list's own tier
+            # columns are calculated.
+            line.append(LineDiscountSpec(
+                description=setting["label"],
+                rate_percent=Decimal(str(setting["percent"])),
+            ))
+
+    if account and not line:
+        available = ", ".join(sorted({w for s in discounts for w in _label_words(s["label"])}))
+        notes.append(
+            f"The customer asked for the '{account_type}' rate, but no matching discount is "
+            f"defined in the price list. The quote uses standard prices."
+            + (f" Rates found in the price list: {available}." if available else "")
+        )
+    return order, line, notes
+
+
 def lookup_prices_from_db(
     identified: IdentifiedRequest,
     source_files: Optional[list[str]] = None,
@@ -558,30 +748,35 @@ def lookup_prices_from_db(
 
     warnings: list[str] = []
     line_items: list[LineItem] = []
-    source_file = source_files[0] if source_files else ""
+    # Search every pinned price list, not just the first — a skill may pin more than one.
+    files = list(source_files) if source_files else [""]
+    source_file = files[0]
     detected_currency = ""
+
+    def _find(finder, query: str) -> Optional[dict]:
+        for f in files:
+            hit = finder(query, f)
+            if hit:
+                return hit
+        return None
 
     for item in identified.items:
         db_row: Optional[dict] = None
 
         # 1. Exact SKU lookup
         if item.sku:
-            db_row = search_by_sku(item.sku, source_file)
+            db_row = _find(search_by_sku, item.sku)
 
         # 2. FTS5 trigram search by full description
         if db_row is None:
-            results = search_items(item.description, source_file, limit=3)
-            if results:
-                db_row = results[0]
+            db_row = _find(lambda q, f: (search_items(q, f, limit=3) or [None])[0], item.description)
 
         # 3. Shorter query (first 3 significant words) as fallback
         if db_row is None:
             words = [w for w in item.description.split() if len(w) > 2][:3]
             short_query = " ".join(words)
             if short_query and short_query.lower() != item.description.lower():
-                results = search_items(short_query, source_file, limit=3)
-                if results:
-                    db_row = results[0]
+                db_row = _find(lambda q, f: (search_items(q, f, limit=3) or [None])[0], short_query)
 
         if db_row is None:
             warnings.append(
@@ -610,9 +805,20 @@ def lookup_prices_from_db(
             )
         )
 
+    # Discounts come from rates stated in the price list, never from the model.
+    order_discounts, line_discounts, notes = build_order_discounts(
+        identified.account_type, source_file
+    )
+    warnings.extend(notes)
+    for spec in line_discounts:
+        for li in line_items:
+            li.discount_percent = spec.rate_percent
+            li.discount_reason = spec.description
+
     return (
         ExtractedData(
             line_items=line_items,
+            order_discounts=order_discounts,
             customer=identified.customer,
             metadata=identified.metadata,
             currency=detected_currency,

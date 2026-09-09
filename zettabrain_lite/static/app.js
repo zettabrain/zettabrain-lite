@@ -1229,6 +1229,11 @@ async function loadSettings() {
     const cfg = data.settings || {};
 
     document.getElementById('set-org-name').value = cfg.org_name || '';
+    document.getElementById('set-org-address').value = cfg.org_address || '';
+    document.getElementById('set-org-phone').value = cfg.org_phone || '';
+    document.getElementById('set-org-email').value = cfg.org_email || '';
+    document.getElementById('set-org-website').value = cfg.org_website || '';
+    document.getElementById('set-org-registration').value = cfg.org_registration || '';
     document.getElementById('set-ollama-host').value = cfg.ollama_host || '';
     document.getElementById('set-embed-model').value = cfg.embed_model || '';
 
@@ -1261,6 +1266,11 @@ async function saveSettings() {
   const settings = {};
   const fields = [
     ['set-org-name', 'org_name'],
+    ['set-org-address', 'org_address'],
+    ['set-org-phone', 'org_phone'],
+    ['set-org-email', 'org_email'],
+    ['set-org-website', 'org_website'],
+    ['set-org-registration', 'org_registration'],
     ['set-ollama-host', 'ollama_host'],
     ['set-embed-model', 'embed_model'],
     ['set-gemini-key', 'gemini_api_key'],

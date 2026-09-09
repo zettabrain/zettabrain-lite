@@ -12,6 +12,34 @@ from .models import GenerationRequest, GenerationResult, Skill
 
 logger = logging.getLogger(__name__)
 
+# Fields describing the organisation sending the document. Without these the model writes
+# "[Your Company Name]" into a quote a customer is meant to receive.
+BUSINESS_FIELDS = ("org_name", "org_address", "org_phone", "org_email", "org_website", "org_registration")
+_BUSINESS_LABELS = {
+    "org_name": "Name",
+    "org_address": "Address",
+    "org_phone": "Phone",
+    "org_email": "Email",
+    "org_website": "Website",
+    "org_registration": "Registration / tax ID",
+}
+
+
+def _business_identity() -> str:
+    """Render the configured organisation details for a prompt, or '' when unset."""
+    try:
+        from ..config import get_setting  # noqa: PLC0415
+
+        lines = []
+        for field in BUSINESS_FIELDS:
+            value = get_setting(field)
+            if value:
+                lines.append(f"{_BUSINESS_LABELS[field]}: {value}")
+        return "\n".join(lines)
+    except Exception:
+        logger.debug("Could not read business identity settings", exc_info=True)
+        return ""
+
 
 class GenerationEngine:
     def __init__(
@@ -49,6 +77,12 @@ class GenerationEngine:
             "Use this date as the current date for any dates in the document (e.g. proposal date, quote date, effective date). Never invent or use a different date."
         )
         prompt_parts.append("")
+
+        identity = _business_identity()
+        if identity:
+            prompt_parts.append("# YOUR ORGANISATION (the sender of this document)")
+            prompt_parts.append(identity)
+            prompt_parts.append("")
 
         prompt_parts.append("# TASK INSTRUCTIONS")
         prompt_parts.append(skill.instructions)
@@ -242,7 +276,16 @@ class GenerationEngine:
             identified = parse_identification(raw_identify)
 
             if identified is None:
+                # This is a quality cliff, not a detail: prices will now come from document
+                # text instead of the price list. The user must be told, or a degraded answer
+                # is indistinguishable from a good one.
                 logger.warning("Identify step failed, falling back to corpus extraction")
+                warnings.append(
+                    "This model could not read the order reliably, so prices were taken from "
+                    "your documents instead of your price list. Check every figure before "
+                    "sending. A larger model, or one of the cloud models in Settings, will "
+                    "give more accurate results."
+                )
                 price_db_available = False  # drop to corpus path below
 
             if identified is not None:
@@ -282,6 +325,7 @@ class GenerationEngine:
                     corpus_context=corpus_context or "",
                     user_input=request.input,
                     computed=computed,
+                    business_identity=_business_identity(),
                 )
                 content = self.llm_provider.generate(
                     prompt=format_prompt, temperature=temperature, max_tokens=max_tokens

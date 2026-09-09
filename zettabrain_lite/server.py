@@ -1731,7 +1731,7 @@ def _parse_md_table(lines: list[str], start: int) -> tuple[list[list[str]], int]
     return rows, i
 
 
-def _render_pdf_table(pdf, rows: list[list[str]], lm: float, pw: float) -> None:
+def _render_pdf_table(pdf, rows: list[list[str]], lm: float, pw: float, font: str = "Helvetica") -> None:
     """Render a parsed markdown table into the PDF with borders and shaded header."""
     if not rows:
         return
@@ -1758,15 +1758,15 @@ def _render_pdf_table(pdf, rows: list[list[str]], lm: float, pw: float) -> None:
         x = lm
         if r_idx == 0:
             pdf.set_fill_color(240, 245, 250)
-            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_font(font, "B", 9)
         else:
             pdf.set_fill_color(255, 255, 255)
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font(font, "", 9)
 
         is_total_row = any("total" in cell.lower() for cell in row) and r_idx == len(rows) - 1
         if is_total_row:
             pdf.set_fill_color(245, 248, 255)
-            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_font(font, "B", 9)
 
         for c_idx, cell in enumerate(row):
             pdf.set_xy(x, pdf.get_y())
@@ -1775,6 +1775,69 @@ def _render_pdf_table(pdf, rows: list[list[str]], lm: float, pw: float) -> None:
         pdf.ln(row_h)
 
     pdf.ln(3)
+
+
+# Unicode-capable fonts commonly present on each platform. The PDF core fonts are latin-1
+# only, so without one of these a Naira, Rupee or Cedi sign renders as '?'.
+_UNICODE_FONT_CANDIDATES = [
+    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ("/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"),
+    ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+    ("/Library/Fonts/Arial Unicode.ttf", "/Library/Fonts/Arial Unicode.ttf"),
+    ("/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
+    ("C:/Windows/Fonts/arialuni.ttf", "C:/Windows/Fonts/arialuni.ttf"),
+    ("C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
+]
+
+# Used only when no Unicode font is installed: an ISO code is correct and readable, '?' is not.
+_SYMBOL_TO_CODE = {
+    "₦": "NGN ", "₹": "INR ", "₵": "GHS ", "€": "EUR ", "£": "GBP ",
+    "¥": "JPY ", "₩": "KRW ", "₪": "ILS ", "₫": "VND ", "₱": "PHP ", "₴": "UAH ",
+}
+
+
+def _font_is_usable(regular: str, bold: str) -> bool:
+    """Render a throwaway PDF to prove the font survives subsetting.
+
+    Some installed fonts register fine but fail later inside output() — macOS Geneva carries
+    bitmap tables fontTools cannot subset. Discovering that at output() time would break the
+    export entirely, so prove it on a scratch document first.
+    """
+    from fpdf import FPDF  # noqa: PLC0415
+
+    try:
+        probe = FPDF()
+        probe.add_page()
+        probe.add_font("ZBProbe", "", regular)
+        probe.add_font("ZBProbe", "B", bold)
+        probe.set_font("ZBProbe", "", 12)
+        probe.cell(0, 8, "₦100.00 ₹100.00 £100.00")
+        probe.output()
+        return True
+    except Exception:
+        logger.debug("Font %s failed a trial render", regular, exc_info=True)
+        return False
+
+
+def _register_pdf_font(pdf) -> str:
+    """Register a Unicode font if one is available. Returns the family name to use."""
+    for regular, bold in _UNICODE_FONT_CANDIDATES:
+        if not Path(regular).exists():
+            continue
+        bold_path = bold if Path(bold).exists() else regular
+        if not _font_is_usable(regular, bold_path):
+            continue
+        try:
+            pdf.add_font("ZBSans", "", regular)
+            pdf.add_font("ZBSans", "B", bold_path)
+            pdf.add_font("ZBSans", "I", regular)
+            return "ZBSans"
+        except Exception:
+            logger.debug("Could not register PDF font %s", regular, exc_info=True)
+    return "Helvetica"
 
 
 @app.get("/api/export/{record_id}/pdf")
@@ -1793,37 +1856,54 @@ async def export_pdf(record_id: int):
 
     org_name = get_setting("org_name") or "Organization"
     logo_path_str = get_setting("logo_path")
+    contact_bits = [get_setting(f) for f in ("org_address", "org_phone", "org_email", "org_website")]
+    contact_line = "   ".join(b for b in contact_bits if b)
+    registration = get_setting("org_registration")
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=25)
     pdf.add_page()
+    font = _register_pdf_font(pdf)
+    unicode_ok = font != "Helvetica"
 
     if logo_path_str and Path(logo_path_str).exists():
         try:
             pdf.image(logo_path_str, x=15, y=10, h=18)
         except Exception:
-            pass
+            logger.debug("Could not place logo in PDF", exc_info=True)
 
-    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_font(font, "B", 18)
     pdf.set_xy(15, 32)
     pdf.set_text_color(30, 41, 59)
-    pdf.cell(0, 10, org_name, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 9, org_name, new_x="LMARGIN", new_y="NEXT")
+
+    # The sender's own details belong in the letterhead, not in the body the model writes.
+    if contact_line:
+        pdf.set_font(font, "", 9)
+        pdf.set_text_color(100, 116, 139)
+        pdf.set_x(15)
+        pdf.multi_cell(pdf.w - 30, 4.5, contact_line)
+    if registration:
+        pdf.set_font(font, "", 8)
+        pdf.set_text_color(100, 116, 139)
+        pdf.set_x(15)
+        pdf.cell(0, 4.5, registration, new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_draw_color(59, 130, 246)
     pdf.set_line_width(0.5)
     pdf.line(15, pdf.get_y() + 2, 195, pdf.get_y() + 2)
-    pdf.ln(8)
+    pdf.ln(7)
 
-    pdf.set_font("Helvetica", "", 10)
+    pdf.set_font(font, "", 9)
     pdf.set_text_color(100, 116, 139)
     pdf.cell(
         0,
         6,
-        f"Skill: {record.skill_name}  |  Generated: {record.created_at.strftime('%B %d, %Y')}",
+        f"{record.skill_name}   {record.created_at.strftime('%d %B %Y')}",
         new_x="LMARGIN",
         new_y="NEXT",
     )
-    pdf.ln(6)
+    pdf.ln(5)
 
     pdf.set_text_color(30, 41, 59)
     content = record.output_content or ""
@@ -1843,6 +1923,11 @@ async def export_pdf(record_id: int):
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
+        if unicode_ok:
+            return text
+        # No Unicode font installed: render 'NGN 420,000.00' rather than '?420,000.00'.
+        for symbol, code in _SYMBOL_TO_CODE.items():
+            text = text.replace(symbol, code)
         return text.encode("latin-1", errors="replace").decode("latin-1")
 
     content = _sanitize_for_pdf(content)
@@ -1862,39 +1947,39 @@ async def export_pdf(record_id: int):
 
         if stripped.startswith("|") and i + 1 < len(lines) and lines[i + 1].strip().startswith("|"):
             rows, i = _parse_md_table(lines, i)
-            _render_pdf_table(pdf, rows, lm, pw)
+            _render_pdf_table(pdf, rows, lm, pw, font)
             continue
 
         pdf.set_x(lm)
 
         if stripped.startswith("# "):
             pdf.ln(4)
-            pdf.set_font("Helvetica", "B", 16)
+            pdf.set_font(font, "B", 16)
             pdf.set_x(lm)
             pdf.multi_cell(pw, 8, stripped[2:])
             pdf.ln(2)
         elif stripped.startswith("## "):
             pdf.ln(3)
-            pdf.set_font("Helvetica", "B", 13)
+            pdf.set_font(font, "B", 13)
             pdf.set_x(lm)
             pdf.multi_cell(pw, 7, stripped[3:])
             pdf.ln(2)
         elif stripped.startswith("### "):
             pdf.ln(2)
-            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_font(font, "B", 11)
             pdf.set_x(lm)
             pdf.multi_cell(pw, 6, stripped[4:])
             pdf.ln(1)
         elif stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("+ "):
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font(font, "", 10)
             indent = 8
             pdf.set_x(lm + indent)
             pdf.multi_cell(pw - indent, 5.5, "- " + stripped[2:].strip())
         elif stripped.startswith("**") and stripped.endswith("**"):
-            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_font(font, "B", 10)
             pdf.multi_cell(pw, 5.5, stripped.strip("*"))
         else:
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font(font, "", 10)
             pdf.multi_cell(pw, 5.5, stripped.replace("**", ""))
         i += 1
 
@@ -1903,7 +1988,7 @@ async def export_pdf(record_id: int):
     pdf.set_line_width(0.3)
     pdf.line(15, pdf.get_y(), 195, pdf.get_y())
     pdf.ln(4)
-    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_font(font, "I", 8)
     pdf.set_text_color(150, 150, 150)
     pdf.cell(0, 5, f"Generated by ZettaBrain  |  {record.created_at.strftime('%B %d, %Y at %I:%M %p')}", align="C")
 

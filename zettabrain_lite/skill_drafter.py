@@ -389,13 +389,14 @@ CONTEXT (from the organization's document library):
 TASK: Extract every concrete, organization-specific rule from the context above.
 
 Each rule must be a JSON object with these fields:
-- "rule": the rule statement — quote figures, percentages, dollar amounts, and names exactly as they appear
+- "rule": the rule statement — quote figures, percentages, monetary amounts, and names exactly as they appear
 - "category": one of: threshold, approval, prohibition, required, exclusion, disclaimer
 - "source": the document or section the rule came from (use the Source header if available)
 - "confidence": a float from 0.0 to 1.0 — how clearly the document states this as an enforceable rule
 
 INSTRUCTIONS:
-- Quote figures exactly. "$5,000" stays "$5,000", not "a few thousand dollars".
+- Quote figures exactly, in the currency the document uses. A figure written 5,000 stays
+  5,000, not "a few thousand". Never convert a currency and never substitute your own example.
 - Never generalize a specific number into a vague statement. "10 business days" does not become "a reasonable period".
 - Exclude anything a competent professional in this field would already know. General knowledge is not a rule.
 - If a passage is ambiguous, lower the confidence rather than inventing a clear rule.
@@ -585,7 +586,7 @@ Every instruction you write must pass this test: would the output differ if this
 If not, the line must not exist.
 
 ADDITIONAL RULES FOR GENERATION:
-- Do NOT invent thresholds, dollar amounts, percentages, role titles, or approval chains. \
+- Do NOT invent thresholds, monetary amounts, percentages, role titles, or approval chains. \
 If a rule was not provided in the extracted rules below, do not fabricate one.
 - If information is missing that the skill needs, add a ## Gaps section listing the open questions. \
 Never guess.

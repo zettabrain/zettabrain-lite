@@ -139,6 +139,12 @@ class GenerationEngine:
         prompt_parts.append("# OUTPUT INSTRUCTIONS")
         prompt_parts.append("Generate the requested document following the task instructions above.")
         prompt_parts.append(
+            "The task instructions are written for you, not for the reader. Sections such as "
+            "Retrieval Order, Rules, Boundaries, Self-Check, Style, Abstention, Source Documents "
+            "and Gaps describe how to do the work — never reproduce them, or their contents, as "
+            "sections of the document."
+        )
+        prompt_parts.append(
             "IMPORTANT: Always produce the document — never refuse the request. "
             "But never invent a figure to fill a gap. If a number, rate, date, name, or amount is not "
             "available from the corpus or the user request, write [NEEDS INPUT] in its place and continue. "

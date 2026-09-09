@@ -163,7 +163,7 @@ RULES:
 4. Include ALL applicable fees from the corpus (delivery, environmental, cylinder, service fees, etc.).
 5. If a value is not found in the corpus or user request, omit that item entirely. Do NOT invent prices.
 6. Never copy a number from these instructions. Every figure must come from the corpus or the user request.
-7. All numbers must be plain numbers with no dollar signs, commas, or currency symbols.
+7. All numbers must be plain numbers with no currency symbols or thousands separators.
 8. Output ONLY the JSON object. No markdown fences, no explanation, no text before or after.
 
 JSON:"""
@@ -174,7 +174,7 @@ _REPAIR_PROMPT = """The previous response was not valid JSON. Here is what you r
 {raw_output}
 
 Please fix it and return ONLY a valid JSON object with these keys: line_items, fees, taxes, customer, metadata.
-Every number must be a plain number (no dollar signs, no commas). Output ONLY the JSON, nothing else.
+Every number must be plain (no currency symbols, no thousands separators). Output ONLY the JSON.
 
 JSON:"""
 
@@ -222,7 +222,11 @@ instructions describe.
 9. Write the document once. Do not repeat a section, restate the totals in a second block, or append a
    summary of the values you were given.
 10. Do not include a workings or calculation-summary section. The reader wants the figures, not the steps.
-11. Do NOT invent commercial terms. Interest on late payment, accepted payment methods, validity periods,
+11. The task instructions are written for you, not for the reader. Sections such as Retrieval Order,
+    Rules, Boundaries, Self-Check, Style, Abstention, Source Documents and Gaps describe how to do the
+    work — never reproduce them, or their contents, as sections of the document. The reader must see
+    only the sections named under Output Structure.
+12. Do NOT invent commercial terms. Interest on late payment, accepted payment methods, validity periods,
     warranty, cancellation and notice periods commit the sender to something. State only what appears in
     the corpus, the task instructions or the customer's request. Where a term is needed but unavailable,
     write [NEEDS INPUT: what is missing] and move on. "Interest at 2% per month" invented for a quote is

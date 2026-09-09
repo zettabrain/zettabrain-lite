@@ -397,7 +397,73 @@ def delete_source(source_file: str) -> int:
 
 # ── Rates and settings (VAT, discounts, thresholds read from the source file) ──
 
-_TAX_KW = {"vat", "gst", "hst", "sales tax", "tax"}
+# Longest first, so "Sales tax rate" reports "Sales Tax" rather than "TAX".
+_TAX_NAME_RE = re.compile(
+    r"\b(value added tax|sales tax|consumption tax|service tax|vat|gst|hst|tax)\b",
+    re.IGNORECASE,
+)
+
+
+# Order matters: a label such as "Bulk order discount (orders above threshold)" names both a
+# discount and a threshold. The rate keywords are checked first so the qualifier does not win.
+_SETTING_KINDS: list[tuple[str, re.Pattern]] = [
+    ("tax", re.compile(r"\b(vat|gst|hst|sales tax|tax)\b", re.IGNORECASE)),
+    ("discount", re.compile(r"\b(discount|rebate)\b", re.IGNORECASE)),
+    ("surcharge", re.compile(r"\b(surcharge|markup|uplift|premium)\b", re.IGNORECASE)),
+    ("threshold", re.compile(r"\b(threshold|minimum order|min order|order value)\b", re.IGNORECASE)),
+]
+
+_THRESHOLD_WORDING = re.compile(r"\b(threshold|minimum|min\b|order value|above|over)\b", re.IGNORECASE)
+
+
+def classify_setting(label: str) -> str:
+    """Return the kind of rate a label names, or '' when it names none."""
+    for kind, pattern in _SETTING_KINDS:
+        if pattern.search(label):
+            return kind
+    return ""
+
+
+def setting_from_pair(label: str, value: object) -> Optional[dict]:
+    """Build a settings row from a label/value pair, or None when it is not a rate.
+
+    Rate or absolute amount is decided by the VALUE, not only by the label. A label such as
+    'Volume discount threshold' names both a discount and a threshold; reading 2000 as a
+    percentage yields nonsense, so the number itself settles which one it is.
+    """
+    label = str(label).strip()
+    if not label or len(label) > 120:
+        return None
+    kind = classify_setting(label)
+    if not kind:
+        return None
+
+    raw = str(value).strip()
+    if isinstance(value, str) and value.startswith("="):
+        return None  # formula with no cached value
+    percent_written = isinstance(value, str) and "%" in value
+    # parse_price handles currency, not percent signs; strip one before parsing "7.5%".
+    amount, _currency = parse_price(raw.replace("%", "").strip() if percent_written else value)
+    if amount is None:
+        return None
+
+    mentions_threshold = bool(_THRESHOLD_WORDING.search(label))
+    # Spreadsheets store a rate either as a fraction (0.075) or written out ("7.5%").
+    # Anything larger than 100 that is not a written percentage is an absolute amount.
+    is_rate = percent_written or amount <= 1 or (amount <= 100 and not mentions_threshold)
+
+    if not is_rate:
+        if mentions_threshold or kind == "threshold":
+            return {"label": label, "kind": "threshold", "percent": None, "amount": amount, "raw": raw}
+        return None  # a large number with no threshold wording — too ambiguous to use
+
+    if kind == "threshold":
+        # Threshold wording but a rate-sized value: treat it as the rate it is.
+        kind = "discount"
+    percent = amount * 100 if (amount <= 1 and not percent_written) else amount
+    if percent > 100:
+        return None
+    return {"label": label, "kind": kind, "percent": round(percent, 4), "amount": None, "raw": raw}
 
 
 def upsert_settings(source_file: str, settings: list[dict]) -> int:
@@ -453,11 +519,12 @@ def get_tax_setting(source_file: str = "") -> Optional[dict]:
     for row in get_settings(source_file):
         if row.get("kind") != "tax" or row.get("percent") is None:
             continue
-        label = str(row.get("label", ""))
-        name = "Tax"
-        for word in re.findall(r"[A-Za-z]+", label):
-            if word.lower() in _TAX_KW:
-                name = word.upper() if len(word) <= 3 else word.capitalize()
-                break
+        match = _TAX_NAME_RE.search(str(row.get("label", "")))
+        if not match:
+            name = "Tax"
+        else:
+            found = match.group(1)
+            # Acronyms stay upper-case; multi-word names read as a title.
+            name = found.upper() if len(found) <= 3 else found.title()
         return {"name": name, "rate": float(row["percent"])}
     return None

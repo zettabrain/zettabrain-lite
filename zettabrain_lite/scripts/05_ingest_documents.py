@@ -23,7 +23,6 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Optional
 
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
@@ -31,7 +30,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 try:
-    from zettabrain_lite.price_list import currency_from_header, detect_columns, parse_price
+    from zettabrain_lite.price_list import currency_from_header, detect_columns, parse_price, setting_from_pair
     from zettabrain_lite.price_list import upsert_items as _upsert_price_items
 
     _HAS_PRICE_LIST = True
@@ -384,48 +383,7 @@ def _load_pdf_price_rows(filepath: str) -> list[dict]:
 
 
 # ── Rates and thresholds (VAT, discounts) stated as label/value pairs ─────────
-# Order matters: a label such as "Bulk order discount (orders above threshold)" names both a
-# discount and a threshold. The rate keywords are checked first so the qualifier does not win.
-_SETTING_KINDS: list[tuple[str, re.Pattern]] = [
-    ("tax", re.compile(r"\b(vat|gst|hst|sales tax|tax)\b", re.IGNORECASE)),
-    ("discount", re.compile(r"\b(discount|rebate)\b", re.IGNORECASE)),
-    ("surcharge", re.compile(r"\b(surcharge|markup|uplift|premium)\b", re.IGNORECASE)),
-    ("threshold", re.compile(r"\b(threshold|minimum order|min order|order value)\b", re.IGNORECASE)),
-]
-
-
-def _classify_setting(label: str) -> str:
-    for kind, pattern in _SETTING_KINDS:
-        if pattern.search(label):
-            return kind
-    return ""
-
-
-def _setting_from_pair(label: str, value: object) -> Optional[dict]:
-    """Build a settings dict from a label/value pair, or None when it is not a rate."""
-    label = str(label).strip()
-    if not label or len(label) > 120:
-        return None
-    kind = _classify_setting(label)
-    if not kind:
-        return None
-
-    raw = str(value).strip()
-    if isinstance(value, str) and value.startswith("="):
-        return None  # formula with no cached value
-    percent_written = isinstance(value, str) and "%" in value
-    amount, _currency = parse_price(value)
-    if amount is None:
-        return None
-
-    # Thresholds are absolute money; everything else is a rate. Spreadsheets store rates
-    # either as a fraction (0.075) or as a written percentage ("7.5%").
-    if kind == "threshold":
-        return {"label": label, "kind": kind, "percent": None, "amount": amount, "raw": raw}
-    percent = amount * 100 if (amount <= 1 and not percent_written) else amount
-    if percent > 100:
-        return None
-    return {"label": label, "kind": kind, "percent": round(percent, 4), "amount": None, "raw": raw}
+# Classification lives in price_list.py so it is testable without the ingestion stack.
 
 
 def _load_xlsx_settings(filepath: str) -> list[dict]:
@@ -450,7 +408,7 @@ def _load_xlsx_settings(filepath: str) -> list[dict]:
                 cells = [c for c in row if c is not None]
                 if len(cells) < 2:
                     continue
-                setting = _setting_from_pair(cells[0], cells[1])
+                setting = setting_from_pair(cells[0], cells[1])
                 if setting and setting["label"].lower() not in seen:
                     seen.add(setting["label"].lower())
                     found.append(setting)

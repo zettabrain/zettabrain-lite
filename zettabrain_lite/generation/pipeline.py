@@ -674,10 +674,19 @@ def parse_identification(raw: str) -> Optional[IdentifiedRequest]:
     return req
 
 
-_STOP = {"the", "and", "of", "or", "a", "an", "above", "orders", "order", "value", "rate", "applied"}
+# Words shared by most rate labels. They carry no identity, so they must not be what pairs a
+# discount with a threshold — otherwise "Fleet account discount" pairs with "Volume discount
+# threshold" on the word "discount" alone.
+_STOP = {
+    "the", "and", "of", "or", "a", "an", "above", "over", "orders", "order", "value",
+    "rate", "rates", "applied", "all", "items", "customer", "customers",
+    "discount", "discounts", "rebate", "threshold", "minimum", "surcharge", "markup",
+    "tax", "vat", "gst", "hst", "account", "accounts", "level", "levels", "tier",
+}
 
 
 def _label_words(label: str) -> set[str]:
+    """The identifying words of a rate label — what makes it 'bulk' or 'fleet' or 'trade'."""
     return {w for w in re.findall(r"[a-z]+", label.lower()) if len(w) > 2 and w not in _STOP}
 
 

@@ -2,74 +2,28 @@
 ZettaBrain — Shared retrieval module.
 
 Pipeline per query:
-  1. MMR semantic search  (ChromaDB)   — embedding similarity + diversity
-  2. BM25 keyword search  (disk index) — exact term matching
-  3. Merge + deduplicate               — best of both
-  4. Cross-encoder re-rank (FlashRank) — pick the most relevant N
+  1. Vector search (sqlite-vec)  — embedding similarity, then MMR for diversity
+  2. Keyword search (SQLite FTS5) — exact term matching, BM25 ranked
+  3. Merge with Reciprocal Rank Fusion — a chunk both methods like ranks highest
+  4. Return the top N
 
-Imports are best-effort: BM25 and re-ranking degrade gracefully to
-pure MMR if their packages are missing or the index hasn't been built yet.
+Both indexes live in one SQLite file. There is no separate vector database, no pickled
+BM25 index and no cross-encoder model to download at runtime.
 """
 
+from __future__ import annotations
+
 import hashlib
-import os
-import pickle
+import logging
+import math
 from pathlib import Path
 
-# ── optional deps ─────────────────────────────────────────────────────────────
-try:
-    from rank_bm25 import BM25Okapi
+from .documents import Document
 
-    _HAS_BM25 = True
-except ImportError:
-    _HAS_BM25 = False
+log = logging.getLogger(__name__)
 
-try:
-    import io as _io
-    import os as _os
-    import sys as _sys
+# ── prompts ───────────────────────────────────────────────────────────────────
 
-    # Suppress onnxruntime C++ warnings (write to OS fd 2) and Python logging noise.
-    # Strategy: redirect Python sys.stderr to StringIO (so any logging.StreamHandler
-    # installed during import has a live buffer, not a file that gets closed later),
-    # AND dup fd 2 to /dev/null (so C++ code writing directly to stderr is silenced).
-    _os.environ.setdefault("ORT_LOGGING_LEVEL", "3")  # 3 = ERROR only
-    _saved_stderr = _sys.stderr
-    _sys.stderr = _io.StringIO()  # Python logging → buffer, never closed
-    _saved_fd2 = _os.dup(2)  # save real OS-level stderr fd
-    _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
-    _os.dup2(_devnull_fd, 2)  # C++ writes → /dev/null
-    _os.close(_devnull_fd)
-    try:
-        from flashrank import Ranker, RerankRequest
-
-        _ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="/tmp/flashrank")
-        _HAS_RERANKER = True
-    finally:
-        _os.dup2(_saved_fd2, 2)  # restore OS-level stderr
-        _os.close(_saved_fd2)
-        _sys.stderr = _saved_stderr  # restore Python stderr (StringIO left open — safe)
-except Exception:
-    _ranker = None
-    _HAS_RERANKER = False
-
-
-# ── paths ─────────────────────────────────────────────────────────────────────
-def _chroma_parent() -> Path:
-    """Locate the ChromaDB parent dir from env / config file / fallback."""
-    chroma = os.environ.get("ZETTABRAIN_CHROMA", "")
-    if not chroma:
-        for cfg_path in ["/opt/zettabrain/src/zettabrain.env"]:
-            if os.path.exists(cfg_path):
-                for line in open(cfg_path):
-                    if line.startswith("ZETTABRAIN_CHROMA="):
-                        chroma = line.split("=", 1)[1].strip().strip('"')
-    return Path(chroma or "/opt/zettabrain/src/zettabrain_vectorstore").parent
-
-
-BM25_PATH = _chroma_parent() / "bm25_index.pkl"
-
-# ── improved prompt ───────────────────────────────────────────────────────────
 RAG_PROMPT = """You are ZettaBrain, an expert assistant that answers questions from a private document library.
 
 Rules:
@@ -86,182 +40,6 @@ CONTEXT:
 QUESTION: {question}
 
 ANSWER:"""
-
-
-def format_context(docs) -> str:
-    parts = []
-    for doc in docs:
-        source = Path(doc.metadata.get("source", "unknown")).name
-        page = doc.metadata.get("page", "")
-        label = f"{source} p.{page}" if page != "" else source
-        parts.append(f"[{label}]\n{doc.page_content}")
-    return "\n\n---\n\n".join(parts)
-
-
-# ── BM25 ──────────────────────────────────────────────────────────────────────
-def _load_bm25_data() -> dict | None:
-    if not _HAS_BM25 or not BM25_PATH.exists():
-        return None
-    try:
-        with open(BM25_PATH, "rb") as f:
-            return pickle.load(f)
-    except Exception:
-        return None
-
-
-def _bm25_search(query: str, k: int = 12):
-    from langchain_core.documents import Document
-
-    data = _load_bm25_data()
-    if not data:
-        return []
-    tokens = query.lower().split()
-    scores = data["bm25"].get_scores(tokens)
-    top = scores.argsort()[-(min(k, len(scores))) :][::-1]
-    return [Document(page_content=data["docs"][i], metadata=data["metadatas"][i]) for i in top if scores[i] > 0]
-
-
-def rebuild_bm25_index(vectorstore) -> int:
-    """Rebuild BM25 index from all documents in ChromaDB. Call after ingestion."""
-    if not _HAS_BM25:
-        return 0
-    try:
-        result = vectorstore._collection.get(include=["documents", "metadatas"])
-        docs = result["documents"]
-        metadatas = result["metadatas"]
-        if not docs:
-            return 0
-        bm25 = BM25Okapi([d.lower().split() for d in docs])
-        BM25_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(BM25_PATH, "wb") as f:
-            pickle.dump({"bm25": bm25, "docs": docs, "metadatas": metadatas}, f)
-        return len(docs)
-    except Exception:
-        return 0
-
-
-# ── query normalisation ───────────────────────────────────────────────────────
-# Words that carry no topical signal in short question queries.
-_QUESTION_STOPWORDS = frozenset(
-    {
-        "what",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "how",
-        "does",
-        "do",
-        "did",
-        "can",
-        "could",
-        "would",
-        "should",
-        "the",
-        "a",
-        "an",
-        "of",
-        "in",
-        "to",
-        "for",
-        "and",
-        "or",
-        "not",
-        "with",
-        "about",
-        "explain",
-        "describe",
-        "tell",
-        "me",
-        "give",
-        "show",
-        "define",
-        "meaning",
-        "please",
-        "help",
-        "understand",
-        "overview",
-        "summary",
-        "summarise",
-        "summarize",
-    }
-)
-
-
-def _core_terms(question: str) -> str | None:
-    """
-    Strip question words from short queries to produce a keyword-search-
-    friendly core.  Returns None when nothing useful was stripped (e.g. the
-    query is already a bare keyword, or is long enough to be self-describing).
-
-    Examples
-    --------
-    "What is AWS?"              → "aws"
-    "How does NFS work?"        → "nfs work"
-    "Amazon Web Services"       → None  (no stopwords removed)
-    "Explain deep learning"     → "deep learning"
-    "What are the key features of ChromaDB and vector databases?" → None (>8 words)
-    """
-    words = question.lower().translate(str.maketrans("", "", "?!.,;:\"'")).split()
-    if len(words) > 8:
-        return None  # long queries are specific enough already
-    core = [w for w in words if w not in _QUESTION_STOPWORDS and len(w) > 1]
-    if not core or set(core) == set(words):
-        return None  # nothing useful was stripped
-    return " ".join(core)
-
-
-# ── hybrid retrieval ──────────────────────────────────────────────────────────
-def hybrid_retrieve(question: str, vectorstore, top_k: int = 5) -> list:
-    """
-    Retrieve the top_k most relevant chunks for a question.
-
-    1. MMR semantic search  — fetch 30 candidates, return 6 (relevance-focused)
-    2. BM25 keyword search  — fetch 10 candidates with original question
-    3. BM25 keyword search  — fetch 8 candidates with core terms only
-       (strips question words so "What is AWS?" → "aws" → hits the right doc)
-    4. Deduplicate by content hash
-    5. Re-rank with FlashRank cross-encoder → return top_k
-
-    MMR tuning: lambda_mult=0.82 keeps results tightly on-topic.
-    """
-    # 1. semantic (MMR) — relevance-first, modest diversity
-    semantic = vectorstore.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 6, "fetch_k": 30, "lambda_mult": 0.82},
-    ).invoke(question)
-
-    # 2. BM25 with original question
-    keyword = _bm25_search(question, k=10)
-
-    # 3. BM25 with core terms (handles acronym / stopword-heavy questions)
-    core = _core_terms(question)
-    keyword_core = _bm25_search(core, k=8) if core else []
-
-    # 4. merge + deduplicate (semantic results ranked first)
-    seen, merged = set(), []
-    for doc in semantic + keyword + keyword_core:
-        key = hashlib.md5(doc.page_content.encode()).hexdigest()
-        if key not in seen:
-            seen.add(key)
-            merged.append(doc)
-
-    # 5. re-rank with original question so relevance judgement is correct
-    if _HAS_RERANKER and len(merged) > top_k:
-        try:
-            passages = [{"id": i, "text": d.page_content} for i, d in enumerate(merged)]
-            ranked = _ranker.rerank(RerankRequest(query=question, passages=passages))
-            return [merged[r["id"]] for r in ranked[:top_k]]
-        except Exception:
-            pass
-
-    return merged[:top_k]
-
-
-# ── Advanced RAG (Onyx-style 6-stage pipeline) ──────────────────────────────
 
 ADVANCED_RAG_PROMPT = """You are ZettaBrain, an expert AI assistant grounded in a private document library.
 
@@ -283,8 +61,135 @@ QUESTION: {question}
 ANSWER (with inline citations):"""
 
 
-def expand_queries(question: str, llm_fn=None) -> list:
-    """Stage 1: Use the LLM to generate multiple search queries from one question."""
+def format_context(docs: list[Document]) -> str:
+    parts = []
+    for doc in docs:
+        source = Path(doc.metadata.get("source", "unknown")).name
+        page = doc.metadata.get("page", "")
+        label = f"{source} p.{page}" if page != "" else source
+        parts.append(f"[{label}]\n{doc.page_content}")
+    return "\n\n---\n\n".join(parts)
+
+
+# ── query normalisation ───────────────────────────────────────────────────────
+
+_QUESTION_STOPWORDS = frozenset({
+    "what", "is", "are", "was", "were", "be", "been", "being", "how", "does", "do", "did",
+    "can", "could", "would", "should", "the", "a", "an", "of", "in", "to", "for", "and",
+    "or", "not", "with", "about", "explain", "describe", "tell", "me", "give", "show",
+    "define", "meaning", "please", "help", "understand", "overview", "summary",
+    "summarise", "summarize",
+})
+
+
+def _core_terms(question: str) -> str | None:
+    """Strip question words from a short query to leave a keyword-search-friendly core.
+
+    "What is AWS?" -> "aws". Returns None when nothing useful was removed or the query is
+    already long enough to be specific.
+    """
+    words = question.lower().translate(str.maketrans("", "", "?!.,;:\"'")).split()
+    if len(words) > 8:
+        return None
+    core = [w for w in words if w not in _QUESTION_STOPWORDS and len(w) > 1]
+    if not core or set(core) == set(words):
+        return None
+    return " ".join(core)
+
+
+# ── fusion and diversity ──────────────────────────────────────────────────────
+
+
+def _key(doc: Document) -> str:
+    return hashlib.md5(doc.page_content.encode()).hexdigest()
+
+
+def _rrf_merge(ranked_lists: list[list[Document]], k: int = 60) -> list[Document]:
+    """Reciprocal Rank Fusion: a chunk ranked well by several methods rises to the top."""
+    scores: dict[str, list] = {}
+    for ranked in ranked_lists:
+        for rank, doc in enumerate(ranked):
+            entry = scores.setdefault(_key(doc), [0.0, doc])
+            entry[0] += 1.0 / (k + rank + 1)
+    return [doc for _, doc in sorted(scores.values(), key=lambda pair: -pair[0])]
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _mmr(
+    query_vector: list[float],
+    candidates: list[tuple[Document, list[float]]],
+    k: int,
+    lambda_mult: float = 0.82,
+) -> list[Document]:
+    """Maximal Marginal Relevance: pick results that are relevant but not near-duplicates.
+
+    Chroma did this internally. Written out here it is a few lines, and it matters for a
+    corpus where the same passage appears in several documents.
+    """
+    if not candidates:
+        return []
+    selected: list[tuple[Document, list[float]]] = []
+    remaining = list(candidates)
+
+    while remaining and len(selected) < k:
+        best_index, best_score = 0, -math.inf
+        for i, (_, vector) in enumerate(remaining):
+            relevance = _cosine(query_vector, vector)
+            redundancy = max((_cosine(vector, chosen) for _, chosen in selected), default=0.0)
+            score = lambda_mult * relevance - (1 - lambda_mult) * redundancy
+            if score > best_score:
+                best_index, best_score = i, score
+        selected.append(remaining.pop(best_index))
+    return [doc for doc, _ in selected]
+
+
+# ── hybrid retrieval ──────────────────────────────────────────────────────────
+
+
+def hybrid_retrieve(question: str, store, top_k: int = 5, embedder=None) -> list[Document]:
+    """Retrieve the top_k most relevant chunks.
+
+    1. Vector search for 30 candidates, reduced to 6 by MMR
+    2. Keyword search on the question, and again on its core terms
+    3. Reciprocal Rank Fusion across all three lists
+    """
+    ranked_lists: list[list[Document]] = []
+
+    if embedder is not None:
+        try:
+            query_vector = embedder.embed_query(question)
+            hits = store.search_vector(query_vector, k=30, with_vectors=True)
+            candidates = [(doc, vector) for doc, _distance, vector in hits]
+            ranked_lists.append(_mmr(query_vector, candidates, k=6))
+        except Exception as exc:
+            log.warning("Vector search unavailable, falling back to keyword search: %s", exc)
+
+    keyword = [doc for doc, _ in store.search_keyword(question, k=10)]
+    if keyword:
+        ranked_lists.append(keyword)
+
+    core = _core_terms(question)
+    if core:
+        keyword_core = [doc for doc, _ in store.search_keyword(core, k=8)]
+        if keyword_core:
+            ranked_lists.append(keyword_core)
+
+    if not ranked_lists:
+        return []
+    return _rrf_merge(ranked_lists)[:top_k]
+
+
+# ── Advanced RAG ─────────────────────────────────────────────────────────────
+
+
+def expand_queries(question: str, llm_fn=None) -> list[str]:
+    """Stage 1: ask the model for several search phrasings of one question."""
     if not llm_fn:
         return [question]
 
@@ -296,32 +201,17 @@ def expand_queries(question: str, llm_fn=None) -> list:
         "Line 3: Broaden to related concepts that might contain the answer\n\n"
         f"Question: {question}"
     )
-
     try:
-        result = llm_fn(prompt)
-        lines = [line.strip() for line in result.strip().split("\n") if line.strip()]
+        lines = [line.strip() for line in llm_fn(prompt).strip().split("\n") if line.strip()]
         if lines:
             return lines[:3]
     except Exception:
-        pass
-
+        log.debug("Query expansion failed", exc_info=True)
     return [question]
 
 
-def _rrf_merge(ranked_lists: list, k: int = 60) -> list:
-    """Reciprocal Rank Fusion: merge multiple ranked result lists."""
-    scores = {}
-    for ranked in ranked_lists:
-        for rank, doc in enumerate(ranked):
-            key = hashlib.md5(doc.page_content.encode()).hexdigest()
-            if key not in scores:
-                scores[key] = [0.0, doc]
-            scores[key][0] += 1.0 / (k + rank + 1)
-    return [item[1] for item in sorted(scores.values(), key=lambda x: -x[0])]
-
-
-def select_chunks(question: str, chunks: list, llm_fn, max_select: int = 8) -> list:
-    """Stage 3: LLM reviews retrieved chunks and selects the most relevant ones."""
+def select_chunks(question: str, chunks: list[Document], llm_fn, max_select: int = 8) -> list[Document]:
+    """Stage 3: let the model choose the most relevant chunks."""
     if not llm_fn or len(chunks) <= max_select:
         return chunks[:max_select]
 
@@ -331,159 +221,82 @@ def select_chunks(question: str, chunks: list, llm_fn, max_select: int = 8) -> l
         f"Below are {min(len(chunks), 20)} chunks retrieved from a document library. "
         "Select the chunk numbers that are most relevant to answering the question. "
         "Return ONLY the numbers, comma-separated.\n\n"
-        f"Question: {question}\n\n"
-        f"{numbered}\n\n"
+        f"Question: {question}\n\n{numbered}\n\n"
         "Most relevant chunk numbers (comma-separated):"
     )
-
     try:
-        result = llm_fn(prompt)
-        import re
+        import re  # noqa: PLC0415
 
-        nums = [int(n) for n in re.findall(r"\d+", result)]
-        selected = []
-        for n in nums:
-            idx = n - 1
-            if 0 <= idx < len(chunks) and chunks[idx] not in selected:
-                selected.append(chunks[idx])
+        numbers = [int(n) for n in re.findall(r"\d+", llm_fn(prompt))]
+        selected: list[Document] = []
+        for n in numbers:
+            index = n - 1
+            if 0 <= index < len(chunks) and chunks[index] not in selected:
+                selected.append(chunks[index])
             if len(selected) >= max_select:
                 break
         if selected:
             return selected
     except Exception:
-        pass
-
+        log.debug("Chunk selection failed", exc_info=True)
     return chunks[:max_select]
 
 
-def expand_context(selected_chunks: list, vectorstore, window: int = 1) -> list:
-    """Stage 4: For each selected chunk, include adjacent chunks from the same document."""
+def expand_context(selected: list[Document], store, window: int = 1) -> list[Document]:
+    """Stage 4: include the chunks on either side of each selection, from the same file."""
     try:
-        collection = vectorstore._collection
-        all_data = collection.get(include=["documents", "metadatas"])
+        everything = store.all_documents()
     except Exception:
-        return selected_chunks
+        return selected
+    if not everything:
+        return selected
 
-    if not all_data or not all_data.get("documents"):
-        return selected_chunks
+    by_file: dict[str, list[Document]] = {}
+    for doc in everything:
+        by_file.setdefault(doc.metadata.get("filename", ""), []).append(doc)
 
-    from langchain_core.documents import Document
-
-    by_source = {}
-    for i, meta in enumerate(all_data["metadatas"]):
-        src = meta.get("source", "")
-        page = meta.get("page", 0)
+    expanded: list[Document] = []
+    seen: set[str] = set()
+    for chunk in selected:
+        siblings = by_file.get(chunk.metadata.get("filename", ""), [])
         try:
-            page = int(page) if page != "" else 0
-        except (ValueError, TypeError):
-            page = 0
-        by_source.setdefault(src, []).append((page, i))
-
-    for src in by_source:
-        by_source[src].sort()
-
-    expanded = []
-    seen = set()
-
-    for chunk in selected_chunks:
-        src = chunk.metadata.get("source", "")
-        page = chunk.metadata.get("page", 0)
-        try:
-            page = int(page) if page != "" else 0
-        except (ValueError, TypeError):
-            page = 0
-
-        if src in by_source:
-            pages = by_source[src]
-            idx = None
-            for j, (p, _) in enumerate(pages):
-                if p == page:
-                    idx = j
-                    break
-
-            if idx is not None:
-                for offset in range(-window, window + 1):
-                    ni = idx + offset
-                    if 0 <= ni < len(pages):
-                        _, doc_idx = pages[ni]
-                        doc_text = all_data["documents"][doc_idx]
-                        key = hashlib.md5(doc_text.encode()).hexdigest()
-                        if key not in seen:
-                            seen.add(key)
-                            expanded.append(
-                                Document(
-                                    page_content=doc_text,
-                                    metadata=all_data["metadatas"][doc_idx],
-                                )
-                            )
-            else:
-                key = hashlib.md5(chunk.page_content.encode()).hexdigest()
-                if key not in seen:
-                    seen.add(key)
-                    expanded.append(chunk)
+            position = siblings.index(chunk)
+        except ValueError:
+            position = None
+        if position is None:
+            candidates = [chunk]
         else:
-            key = hashlib.md5(chunk.page_content.encode()).hexdigest()
+            low = max(0, position - window)
+            candidates = siblings[low : position + window + 1]
+        for doc in candidates:
+            key = _key(doc)
             if key not in seen:
                 seen.add(key)
-                expanded.append(chunk)
-
+                expanded.append(doc)
     return expanded
 
 
-def advanced_retrieve(
-    question: str,
-    vectorstore,
-    top_k: int = 5,
-    llm_fn=None,
-) -> list:
-    """
-    Onyx-style 6-stage retrieval pipeline:
-      1. Query expansion  — LLM generates 3 search variants
-      2. Multi-query hybrid search with RRF fusion
-      3. LLM-driven chunk selection
-      4. Context expansion — adjacent chunks from same docs
-      5. Cross-encoder rerank (FlashRank) → top_k
-    """
-    # Stage 1: Query expansion
-    queries = expand_queries(question, llm_fn)
+def advanced_retrieve(question: str, store, top_k: int = 5, llm_fn=None, embedder=None) -> list[Document]:
+    """Multi-query retrieval: expand, search, fuse, select, widen."""
+    ranked_lists: list[list[Document]] = []
+    for query in expand_queries(question, llm_fn):
+        ranked_lists.append(hybrid_retrieve(query, store, top_k=top_k * 2, embedder=embedder))
 
-    # Stage 2: Multi-query hybrid search + RRF
-    ranked_lists = []
-    for q in queries:
-        semantic = vectorstore.as_retriever(
-            search_type="mmr",
-            search_kwargs={"k": 6, "fetch_k": 30, "lambda_mult": 0.82},
-        ).invoke(q)
-        ranked_lists.append(semantic)
+    merged = _rrf_merge([lst for lst in ranked_lists if lst])
+    if not merged:
+        return []
 
-        keyword = _bm25_search(q, k=10)
-        if keyword:
-            ranked_lists.append(keyword)
+    selected = (
+        select_chunks(question, merged, llm_fn, max_select=top_k * 2)
+        if llm_fn and len(merged) > top_k
+        else merged[: top_k * 2]
+    )
+    return expand_context(selected, store, window=1)[:top_k]
 
-        core = _core_terms(q)
-        if core:
-            keyword_core = _bm25_search(core, k=8)
-            if keyword_core:
-                ranked_lists.append(keyword_core)
 
-    merged = _rrf_merge(ranked_lists)
-
-    # Stage 3: LLM chunk selection
-    if llm_fn and len(merged) > top_k:
-        selected = select_chunks(question, merged, llm_fn, max_select=top_k * 2)
-    else:
-        selected = merged[: top_k * 2]
-
-    # Stage 4: Context expansion
-    expanded = expand_context(selected, vectorstore, window=1)
-
-    # Stage 5: Cross-encoder rerank
-    if _HAS_RERANKER and len(expanded) > top_k:
-        try:
-            passages = [{"id": i, "text": d.page_content} for i, d in enumerate(expanded)]
-            ranked = _ranker.rerank(RerankRequest(query=question, passages=passages))
-            return [expanded[r["id"]] for r in ranked[:top_k]]
-        except Exception:
-            pass
-
-    return expanded[:top_k]
+def rebuild_bm25_index(store) -> int:
+    """Kept for callers that still invoke it. FTS5 indexes on write, so this is a no-op."""
+    try:
+        return store.count()
+    except Exception:
+        return 0

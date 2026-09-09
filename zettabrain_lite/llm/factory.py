@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import os
 from typing import Dict, Optional, Tuple
-
-from langchain_core.embeddings import Embeddings
-from langchain_core.language_models import BaseLLM
 
 from .base import LLMProvider
 
@@ -18,8 +14,33 @@ CLOUD_PROVIDERS = {
     "fireworks": "https://api.fireworks.ai/inference/v1",
 }
 
-_llm_cache: Dict[Tuple, BaseLLM] = {}
-_embed_cache: Dict[Tuple, Embeddings] = {}
+_llm_cache: Dict[Tuple, "_ChatAdapter"] = {}
+_embed_cache: Dict[Tuple, object] = {}
+
+# Chat answers are short and must be reproducible.
+_CHAT_TEMPERATURE = 0.0
+_CHAT_MAX_TOKENS = 1024
+
+
+class _ChatAdapter:
+    """Gives an LLMProvider the .invoke(prompt) -> str call the chat routes expect.
+
+    Chat used LangChain LLMs while generation used these providers, so every provider was
+    implemented twice. One implementation now serves both.
+    """
+
+    def __init__(self, provider: LLMProvider):
+        self.provider = provider
+
+    def invoke(self, prompt: str) -> str:
+        return self.provider.generate(
+            prompt, temperature=_CHAT_TEMPERATURE, max_tokens=_CHAT_MAX_TOKENS
+        )
+
+    def stream(self, prompt: str):
+        return self.provider.stream(
+            prompt, temperature=_CHAT_TEMPERATURE, max_tokens=_CHAT_MAX_TOKENS
+        )
 
 
 def get_chat_llm(
@@ -27,8 +48,8 @@ def get_chat_llm(
     model: str,
     ollama_host: Optional[str] = None,
     api_key: Optional[str] = None,
-) -> BaseLLM:
-    """Create a LangChain LLM for RAG chat (cached)."""
+) -> "_ChatAdapter":
+    """Create the LLM used for RAG chat (cached)."""
     if provider == "ollama":
         cache_key = (provider, model, ollama_host)
     else:
@@ -37,63 +58,17 @@ def get_chat_llm(
     if cache_key in _llm_cache:
         return _llm_cache[cache_key]
 
+    kwargs: dict = {"provider_name": provider, "model": model}
     if provider == "ollama":
         if not ollama_host:
             raise ValueError("ollama_host is required for Ollama provider")
-        from langchain_ollama import OllamaLLM
+        kwargs["base_url"] = ollama_host
+    elif api_key:
+        kwargs["api_key"] = api_key
 
-        llm = OllamaLLM(model=model, base_url=ollama_host, temperature=0.0, num_predict=1024)
-
-    elif provider in CLOUD_PROVIDERS:
-        if not api_key:
-            env_var = f"{provider.upper()}_API_KEY"
-            api_key = os.getenv(env_var)
-        if not api_key:
-            raise ValueError(f"API key required for {provider}. Configure in Settings.")
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=model,
-            api_key=api_key,
-            base_url=CLOUD_PROVIDERS[provider],
-            temperature=0.0,
-            max_tokens=1024,
-        )
-
-    elif provider == "openai":
-        if not api_key:
-            raise ValueError("API key required for OpenAI. Configure in Settings.")
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(model=model, api_key=api_key, temperature=0.0, max_tokens=1024)
-
-    elif provider == "claude":
-        if not api_key:
-            raise ValueError("API key required for Claude. Configure in Settings.")
-        from langchain_anthropic import ChatAnthropic
-
-        llm = ChatAnthropic(model=model, api_key=api_key, max_tokens=1024)
-
-    elif provider == "gemini":
-        if not api_key:
-            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("API key required for Gemini. Configure in Settings.")
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=model,
-            api_key=api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-            temperature=0.0,
-            max_tokens=1024,
-        )
-
-    else:
-        raise ValueError(f"Unsupported LLM provider: {provider}")
-
-    _llm_cache[cache_key] = llm
-    return llm
+    adapter = _ChatAdapter(create_generation_provider(**kwargs))
+    _llm_cache[cache_key] = adapter
+    return adapter
 
 
 def get_embeddings(
@@ -101,8 +76,8 @@ def get_embeddings(
     model: str,
     ollama_host: Optional[str] = None,
     openai_key: Optional[str] = None,
-) -> Embeddings:
-    """Create a LangChain embeddings instance (cached)."""
+):
+    """Create an embeddings instance (cached)."""
     if provider == "ollama":
         cache_key = (provider, model, ollama_host)
     elif provider == "openai":
@@ -113,18 +88,16 @@ def get_embeddings(
     if cache_key in _embed_cache:
         return _embed_cache[cache_key]
 
+    from ..embeddings import OllamaEmbedder, OpenAIEmbedder
+
     if provider == "ollama":
         if not ollama_host:
             raise ValueError("ollama_host is required for Ollama embeddings")
-        from langchain_ollama import OllamaEmbeddings
-
-        embeddings = OllamaEmbeddings(model=model, base_url=ollama_host)
+        embeddings = OllamaEmbedder(model=model, base_url=ollama_host)
     elif provider == "openai":
         if not openai_key:
             raise ValueError("API key required for OpenAI embeddings. Configure in Settings.")
-        from langchain_openai import OpenAIEmbeddings
-
-        embeddings = OpenAIEmbeddings(model=model, api_key=openai_key)
+        embeddings = OpenAIEmbedder(model=model, api_key=openai_key)
 
     _embed_cache[cache_key] = embeddings
     return embeddings

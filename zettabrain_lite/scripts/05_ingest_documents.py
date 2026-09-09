@@ -1,7 +1,7 @@
 """
 ZettaBrain — Document Ingestion Utility
 
-Incrementally ingests documents into the ChromaDB vector store.
+Incrementally ingests documents into the SQLite document store.
 Skips already-ingested files using MD5 hash tracking.
 
 Usage:
@@ -24,10 +24,11 @@ import re
 import time
 from pathlib import Path
 
-from langchain_chroma import Chroma
-from langchain_community.document_loaders import Docx2txtLoader, PyPDFLoader, TextLoader
-from langchain_ollama import OllamaEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from zettabrain_lite.documents import Document
+from zettabrain_lite.embeddings import build_embedder
+from zettabrain_lite.loaders import load_file as _load_supported_file
+from zettabrain_lite.store import DocumentStore
+from zettabrain_lite.textsplit import split_text
 
 try:
     from zettabrain_lite.price_list import currency_from_header, detect_columns, parse_price, setting_from_pair
@@ -120,6 +121,14 @@ EMBED_MODEL = os.environ.get("ZETTABRAIN_EMBED_MODEL", "nomic-embed-text")
 HASH_CACHE = _default_hash_cache()
 INGEST_ERROR_LOG = str(Path(CHROMA_PATH).parent / "ingest_errors.log")
 
+# Vectors and the keyword index live in one SQLite file alongside the other app data.
+try:
+    from zettabrain_lite.config import DATA_DIR as _DATA_DIR
+
+    STORE_PATH = str(_DATA_DIR / "corpus.db")
+except ImportError:  # running the script standalone
+    STORE_PATH = str(Path(CHROMA_PATH).parent / "corpus.db")
+
 try:
     from zettabrain_lite.config import SUPPORTED_EXTENSIONS as SUPPORTED
 except ImportError:  # running the script standalone, outside the installed package
@@ -154,36 +163,6 @@ def log_ingest_error(filepath: str, reason: str):
             f.write(line)
     except Exception:
         pass
-
-
-def _load_pdf(filepath: str):
-    """Try PyMuPDF first (better layout handling), fall back to pypdf."""
-    try:
-        import fitz  # pymupdf
-
-        docs = []
-        pdf = fitz.open(filepath)
-        for page_num, page in enumerate(pdf):
-            text = page.get_text("text").strip()
-            if text:
-                from langchain_core.documents import Document
-
-                docs.append(Document(page_content=text, metadata={"source": filepath, "page": page_num}))
-        pdf.close()
-        if docs:
-            return docs
-        # PyMuPDF found no text — fall through to pypdf
-    except ImportError:
-        pass
-    except Exception:
-        pass
-
-    # Fallback: pypdf
-    try:
-        return PyPDFLoader(filepath).load()
-    except Exception as e:
-        print(f"  [WARN] Could not parse PDF {Path(filepath).name}: {e}")
-        return []
 
 
 # ── Price list detection helpers ──────────────────────────────────────────────
@@ -436,7 +415,7 @@ def ingest_price_settings(filepath: str, settings: list[dict]) -> int:
 
 
 def _tabular_to_text_chunks(rows: list[dict]) -> list[str]:
-    """Convert price row dicts to searchable text lines for ChromaDB."""
+    """Convert price row dicts to searchable text lines for the corpus index."""
     lines = []
     for r in rows:
         parts = []
@@ -472,24 +451,18 @@ def ingest_price_list(filepath: str, price_rows: list[dict]) -> int:
 
 
 def load_file(filepath: str):
+    """Load a file into documents. Spreadsheets go through the price-list reader first so a
+    rate table is indexed row by row with its column names attached."""
     ext = Path(filepath).suffix.lower()
-    if ext == ".pdf":
-        return _load_pdf(filepath)
-    elif ext in {".txt", ".md"}:
-        return TextLoader(filepath, encoding="utf-8").load()
-    elif ext in {".docx", ".doc"}:
-        return Docx2txtLoader(filepath).load()
-    elif ext in {".xlsx", ".xls"}:
+    if ext in {".xlsx", ".xls"}:
         return _load_xlsx_as_documents(filepath)
-    elif ext == ".csv":
+    if ext == ".csv":
         return _load_csv_as_documents(filepath)
-    return []
+    return _load_supported_file(filepath)
 
 
 def _load_xlsx_as_documents(filepath: str):
-    """Return LangChain Documents from XLSX rows (one doc per row as key=value text)."""
-    from langchain_core.documents import Document  # noqa: PLC0415
-
+    """Return Documents from XLSX rows (one doc per row as key=value text)."""
     price_rows = _load_xlsx_price_rows(filepath)
     if price_rows:
         lines = _tabular_to_text_chunks(price_rows)
@@ -515,9 +488,7 @@ def _load_xlsx_as_documents(filepath: str):
 
 
 def _load_csv_as_documents(filepath: str):
-    """Return LangChain Documents from CSV rows (one doc per row as key=value text)."""
-    from langchain_core.documents import Document  # noqa: PLC0415
-
+    """Return Documents from CSV rows (one doc per row as key=value text)."""
     price_rows = _load_csv_price_rows(filepath)
     if price_rows:
         lines = _tabular_to_text_chunks(price_rows)
@@ -554,8 +525,8 @@ def _get_storage_profile(docs_path: str) -> dict:
     return dict(_DEFAULT_PROFILE)
 
 
-def _adaptive_splitter(filepath: str, docs) -> RecursiveCharacterTextSplitter:
-    """Tune chunk size by file type and text density."""
+def _chunk_settings(filepath: str, docs) -> tuple[int, int]:
+    """Tune chunk size by file type and text density. Returns (chunk_size, overlap)."""
     ext = Path(filepath).suffix.lower()
     if ext == ".pdf":
         size, overlap = 1000, 150
@@ -571,12 +542,12 @@ def _adaptive_splitter(filepath: str, docs) -> RecursiveCharacterTextSplitter:
         size = int(size * 1.5)
         overlap = int(overlap * 1.5)
 
-    return RecursiveCharacterTextSplitter(
-        chunk_size=size, chunk_overlap=overlap, separators=["\n\n\n", "\n\n", "\n", ". ", " ", ""]
-    )
+    return size, overlap
 
 
-def ingest_file(filepath: str, vectorstore, hash_cache: dict, profile: dict | None = None) -> bool:
+def ingest_file(
+    filepath: str, vectorstore, embedder, hash_cache: dict, profile: dict | None = None
+) -> bool:
     """Ingest a single file. Returns True if ingested, False if skipped."""
     filepath = str(Path(filepath).resolve())
     file_hash = get_file_hash(filepath)
@@ -599,11 +570,12 @@ def ingest_file(filepath: str, vectorstore, hash_cache: dict, profile: dict | No
         log_ingest_error(filepath, reason)
         return False
 
-    splitter = _adaptive_splitter(filepath, docs)
-    chunks = splitter.split_documents(docs)
-
-    # Drop empty chunks that would cause ChromaDB to reject the batch
-    chunks = [c for c in chunks if c.page_content.strip()]
+    size, overlap = _chunk_settings(filepath, docs)
+    chunks = []
+    for doc in docs:
+        for piece in split_text(doc.page_content, chunk_size=size, chunk_overlap=overlap):
+            if piece.strip():
+                chunks.append(Document(page_content=piece, metadata=dict(doc.metadata)))
 
     storage_type = (profile or _DEFAULT_PROFILE)["storage_type"]
     for chunk in chunks:
@@ -617,8 +589,8 @@ def ingest_file(filepath: str, vectorstore, hash_cache: dict, profile: dict | No
         batch = chunks[i : i + BATCH_SIZE]
         for attempt in range(3):
             try:
-                vectorstore.add_documents(batch)
-                added += len(batch)
+                vectors = embedder.embed_documents([c.page_content for c in batch])
+                added += vectorstore.add(batch, vectors)
                 break
             except Exception as e:
                 if attempt == 2:
@@ -680,17 +652,16 @@ def main():
     args = parser.parse_args()
 
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-    embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=ollama_host)
-    os.makedirs(CHROMA_PATH, exist_ok=True)
-    vectorstore = Chroma(
-        persist_directory=CHROMA_PATH, embedding_function=embeddings, collection_name="zettabrain_docs"
+    embedder = build_embedder(
+        {"embed_model": EMBED_MODEL, "ollama_host": ollama_host}, EMBED_MODEL, ollama_host
     )
+    vectorstore = DocumentStore(STORE_PATH)
 
     # ---- Stats ----
     if args.stats:
-        count = vectorstore._collection.count()
+        count = vectorstore.count()
         hash_cache = load_hash_cache()
-        print(f"\nVector store : {CHROMA_PATH}")
+        print(f"\nDocument store: {STORE_PATH}")
         print(f"Total chunks : {count}")
         print(f"Tracked files: {len(hash_cache)}")
         for fp in sorted(hash_cache):
@@ -702,9 +673,9 @@ def main():
     if args.clear:
         confirm = input("This will delete ALL ingested documents. Type 'yes' to confirm: ")
         if confirm.lower() == "yes":
-            vectorstore._client.delete_collection("zettabrain_docs")
+            vectorstore.clear()
             save_hash_cache({})
-            print("Vector store cleared.")
+            print("Document store cleared.")
         else:
             print("Cancelled.")
         return
@@ -721,7 +692,7 @@ def main():
         profile = _get_storage_profile(str(Path(args.file).parent))
         print(f"\nIngesting file: {args.file}")
         print(f"Storage: {profile['storage_type']}")
-        if ingest_file(args.file, vectorstore, hash_cache, profile):
+        if ingest_file(args.file, vectorstore, embedder, hash_cache, profile):
             ingested += 1
 
     else:
@@ -739,7 +710,7 @@ def main():
         batch_count = 0
         for f in sorted(files):
             try:
-                if ingest_file(str(f), vectorstore, hash_cache, profile):
+                if ingest_file(str(f), vectorstore, embedder, hash_cache, profile):
                     ingested += 1
                     batch_count += 1
             except Exception as e:

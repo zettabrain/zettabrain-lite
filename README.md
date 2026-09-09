@@ -65,6 +65,18 @@ recall a number. Any rates stated alongside it, such as a VAT line or a bulk dis
 threshold, are read the same way. Nothing needs to be reformatted first: a title block
 above the header, several sheets, and separate trade or tax columns are all handled.
 
+## Retrieval
+
+Search runs on SQLite. Vectors are stored with
+[sqlite-vec](https://github.com/asg017/sqlite-vec) and keywords with SQLite's built-in FTS5,
+both in one file (`data/corpus.db`) that can be copied or backed up like any other. A query
+runs vector search and keyword search in parallel and merges the two with Reciprocal Rank
+Fusion, so a passage found by both ranks highest.
+
+There is no separate vector database and no model downloaded at query time. The embedding
+model is the only thing that needs to be running, and if it is unavailable search falls back
+to keywords alone rather than failing.
+
 ## Development
 
 ```bash

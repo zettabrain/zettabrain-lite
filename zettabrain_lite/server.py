@@ -45,44 +45,48 @@ logger = logging.getLogger(__name__)
 PKG_DIR = Path(__file__).parent
 STATIC_DIR = PKG_DIR / "static"
 CHROMA_PATH = CHROMA_DIR / "default"
+STORE_PATH = DATA_DIR / "corpus.db"
 INGEST_LOG = DATA_DIR / "ingested_files.json"
 
 # ── Vectorstore cache ────────────────────────────────────────────────────────
 _vs_lock = threading.Lock()
-_vs_cache: dict = {"vs": None}
+_vs_cache: dict = {"vs": None, "embedder": None}
 
 
 def _get_vs():
+    """The document store. Vectors and keyword index live in one SQLite file."""
     with _vs_lock:
         if _vs_cache["vs"] is None:
-            from langchain_chroma import Chroma
-            from langchain_ollama import OllamaEmbeddings
+            from .store import DocumentStore
 
-            cfg = load_config()
-            embed_provider = cfg.get("embed_provider", "ollama")
-            embed_model = cfg.get("embed_model", EMBED_MODEL)
-            ollama_host = cfg.get("ollama_host", OLLAMA_HOST)
-
-            if embed_provider == "ollama":
-                emb = OllamaEmbeddings(model=embed_model, base_url=ollama_host)
-            elif embed_provider == "openai":
-                from langchain_openai import OpenAIEmbeddings
-
-                emb = OpenAIEmbeddings(model=embed_model, api_key=cfg.get("openai_api_key"))
-            else:
-                emb = OllamaEmbeddings(model=embed_model, base_url=ollama_host)
-
-            _vs_cache["vs"] = Chroma(
-                persist_directory=str(CHROMA_PATH),
-                embedding_function=emb,
-                collection_name="zettabrain_docs",
-            )
+            _vs_cache["vs"] = DocumentStore(STORE_PATH)
         return _vs_cache["vs"]
+
+
+def _get_embedder():
+    """The configured embedding provider, or None when it cannot be reached.
+
+    Retrieval degrades to keyword-only rather than failing: on a small machine the
+    embedding model is often the thing that will not load.
+    """
+    with _vs_lock:
+        if _vs_cache["embedder"] is None:
+            from .embeddings import build_embedder
+
+            _vs_cache["embedder"] = build_embedder(load_config(), EMBED_MODEL, OLLAMA_HOST)
+        return _vs_cache["embedder"]
 
 
 def _reset_vs_cache():
     with _vs_lock:
+        store = _vs_cache["vs"]
+        if store is not None:
+            try:
+                store.close()
+            except Exception:
+                logger.debug("Could not close the document store", exc_info=True)
         _vs_cache["vs"] = None
+        _vs_cache["embedder"] = None
 
 
 # ── GPU detection ────────────────────────────────────────────────────────────
@@ -158,11 +162,9 @@ def _ollama_running() -> bool:
 
 def _get_chunk_count() -> int:
     try:
-        import chromadb
-
-        client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-        return client.get_collection("zettabrain_docs").count()
+        return _get_vs().count()
     except Exception:
+        logger.debug("Could not count corpus chunks", exc_info=True)
         return 0
 
 
@@ -996,7 +998,7 @@ async def chat(req: ChatRequest, _user: str = Depends(_require_auth)):
             pass
 
         t0 = time.monotonic()
-        sources = advanced_retrieve(question, vs, llm_fn=llm_fn)
+        sources = advanced_retrieve(question, vs, llm_fn=llm_fn, embedder=_get_embedder())
         t_retr = time.monotonic() - t0
 
         context = format_context(sources)
@@ -1018,10 +1020,9 @@ async def chat(req: ChatRequest, _user: str = Depends(_require_auth)):
                 api_key=api_key,
             )
 
-            from langchain_core.prompts import PromptTemplate
-
-            prompt = PromptTemplate.from_template(ADVANCED_RAG_PROMPT)
-            response = llm.invoke(prompt.format(context=context, question=question))
+            response = llm.invoke(
+                ADVANCED_RAG_PROMPT.format(context=context, question=question)
+            )
             if hasattr(response, "content"):
                 answer = response.content.strip()
             else:
@@ -1137,7 +1138,10 @@ async def websocket_chat(websocket: WebSocket):
 
                 t_r0 = time.monotonic()
                 sources = await loop.run_in_executor(
-                    None, lambda: advanced_retrieve(question, vectorstore, llm_fn=ws_llm_fn)
+                    None,
+                    lambda: advanced_retrieve(
+                        question, vectorstore, llm_fn=ws_llm_fn, embedder=_get_embedder()
+                    ),
                 )
                 t_retr = time.monotonic() - t_r0
                 source_list = [
@@ -2258,15 +2262,13 @@ async def get_document_content(path: str):
 # ── Routes: Clear Vectorstore ────────────────────────────────────────────────
 @app.delete("/api/vectorstore")
 async def clear_vectorstore(_user: str = Depends(_require_auth)):
-    _reset_vs_cache()
     try:
-        import chromadb
-
-        chromadb.PersistentClient(path=str(CHROMA_PATH)).delete_collection("zettabrain_docs")
+        _get_vs().clear()
     except Exception:
-        if CHROMA_PATH.exists():
-            shutil.rmtree(str(CHROMA_PATH), ignore_errors=True)
-            CHROMA_PATH.mkdir(parents=True, exist_ok=True)
+        logger.debug("Could not clear the document store", exc_info=True)
+        if STORE_PATH.exists():
+            STORE_PATH.unlink(missing_ok=True)
+    _reset_vs_cache()
 
     if INGEST_LOG.exists():
         INGEST_LOG.write_text("{}", encoding="utf-8")
@@ -2325,35 +2327,15 @@ def _build_corpus_retriever(source_documents: list[str] | None = None):
             self.retrieval_warnings: list[str] = []
 
         def _retrieve_pinned(self, vs):
-            """Fetch ALL chunks from pinned documents by filename metadata."""
-            from langchain_core.documents import Document as LCDocument
-
-            collection = vs._collection
-            result = collection.get(
-                where={"filename": {"$in": self._pinned_docs}},
-                include=["documents", "metadatas"],
-            )
-            if not result["documents"]:
-                found = set()
-            else:
-                found = {m.get("filename") for m in result["metadatas"]}
-
+            """Fetch ALL chunks from pinned documents, in reading order."""
+            docs = vs.documents_for_files(self._pinned_docs)
+            found = {d.metadata.get("filename") for d in docs}
             for doc_name in self._pinned_docs:
                 if doc_name not in found:
                     self.retrieval_warnings.append(
                         f"Document '{doc_name}' not found in corpus. Upload it and re-ingest for accurate results."
                     )
-
-            if not result["documents"]:
-                return []
-
-            paired = list(zip(result["documents"], result["metadatas"]))
-            paired.sort(key=lambda p: (p[1].get("filename", ""), p[1].get("page", 0)))
-
-            return [
-                LCDocument(page_content=text, metadata=meta)
-                for text, meta in paired
-            ]
+            return docs
 
         def get_context_for_generation(self, query, n_results=5, min_relevance=0.3, **kwargs):
             try:
@@ -2362,9 +2344,9 @@ def _build_corpus_retriever(source_documents: list[str] | None = None):
                 if self._pinned_docs:
                     sources = self._retrieve_pinned(vs)
                     if not sources:
-                        sources = hybrid_retrieve(query, vs, top_k=n_results)
+                        sources = hybrid_retrieve(query, vs, top_k=n_results, embedder=_get_embedder())
                 else:
-                    sources = hybrid_retrieve(query, vs, top_k=n_results)
+                    sources = hybrid_retrieve(query, vs, top_k=n_results, embedder=_get_embedder())
 
                 if not sources:
                     return None, []

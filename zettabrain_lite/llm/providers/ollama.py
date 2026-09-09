@@ -36,6 +36,39 @@ class OllamaProvider(LLMProvider):
         options.update(extra)
         return options
 
+    def _explain_http_error(self, exc: httpx.HTTPStatusError) -> str:
+        """Turn an Ollama error response into something the user can act on.
+
+        Ollama puts the real reason in the response body — most often that the model does not
+        fit in available memory. Reporting only the status code leaves the user with nothing.
+        """
+        detail = ""
+        try:
+            body = exc.response.json()
+            detail = body.get("error", "") if isinstance(body, dict) else ""
+        except Exception:
+            detail = (exc.response.text or "").strip()
+        detail = detail[:400]
+
+        lowered = detail.lower()
+        if "memory" in lowered or "out of memory" in lowered or "system memory" in lowered:
+            return (
+                f"The model '{self.model}' does not fit in this machine's memory. "
+                "Choose a smaller model in Settings, or use one of the free cloud models. "
+                f"(Ollama said: {detail})"
+            )
+        if "not found" in lowered or "no such model" in lowered:
+            return (
+                f"The model '{self.model}' is not installed. Pull it from Settings, "
+                f"or run: ollama pull {self.model}"
+            )
+        if detail:
+            return f"Ollama could not run '{self.model}': {detail}"
+        return (
+            f"Ollama returned HTTP {exc.response.status_code} for model '{self.model}'. "
+            "Check that Ollama is running and the model is installed."
+        )
+
     def generate(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> str:
         payload = {
             "model": self.model,
@@ -53,8 +86,10 @@ class OllamaProvider(LLMProvider):
             raise RuntimeError(
                 f"Ollama generation timed out after {self.timeout}s. Try reducing max_tokens or increasing timeout."
             )
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(self._explain_http_error(e))
         except httpx.HTTPError as e:
-            raise RuntimeError(f"Ollama HTTP error: {e}")
+            raise RuntimeError(f"Could not reach Ollama at {self.base_url}: {e}")
 
     def stream(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000, **kwargs) -> Iterator[str]:
         payload = {
@@ -76,6 +111,8 @@ class OllamaProvider(LLMProvider):
                                     yield data["response"]
                             except json.JSONDecodeError:
                                 continue
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(self._explain_http_error(e))
         except Exception as e:
             raise RuntimeError(f"Ollama streaming failed: {e}")
 

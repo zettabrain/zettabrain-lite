@@ -25,6 +25,30 @@ _BUSINESS_LABELS = {
 }
 
 
+# Corpus text sent to the FORMAT step is for boilerplate only — terms, conditions, contact
+# details. Every figure already arrives in the computed block, so a large excerpt buys nothing
+# and costs context a small local model does not have.
+_FORMAT_CORPUS_CHARS = 2000
+
+# Above roughly this size a prompt will not fit a 2048-token window, and Ollama truncates
+# silently from the front rather than failing.
+_SMALL_CONTEXT_TOKENS = 1900
+
+
+def _warn_if_prompt_is_large(prompt: str, warnings: List[str]) -> None:
+    from .pipeline import estimate_tokens  # noqa: PLC0415
+
+    tokens = estimate_tokens(prompt)
+    if tokens > _SMALL_CONTEXT_TOKENS:
+        logger.info("Format prompt is roughly %d tokens", tokens)
+        warnings.append(
+            f"This request needed about {tokens:,} tokens of instructions. Models with a small "
+            "context window will silently drop part of it, which can lose sections of the "
+            "document. If the result looks incomplete, shorten the skill's instructions or use "
+            "a model with a larger context."
+        )
+
+
 def _business_identity() -> str:
     """Render the configured organisation details for a prompt, or '' when unset."""
     try:
@@ -326,7 +350,9 @@ class GenerationEngine:
                     user_input=request.input,
                     computed=computed,
                     business_identity=_business_identity(),
+                    max_corpus_chars=_FORMAT_CORPUS_CHARS,
                 )
+                _warn_if_prompt_is_large(format_prompt, warnings)
                 content = self.llm_provider.generate(
                     prompt=format_prompt, temperature=temperature, max_tokens=max_tokens
                 )
@@ -410,7 +436,10 @@ class GenerationEngine:
             corpus_context=corpus_context,
             user_input=request.input,
             computed=computed,
+            business_identity=_business_identity(),
+            max_corpus_chars=_FORMAT_CORPUS_CHARS,
         )
+        _warn_if_prompt_is_large(format_prompt, warnings)
         content = self.llm_provider.generate(
             prompt=format_prompt, temperature=temperature, max_tokens=max_tokens
         )

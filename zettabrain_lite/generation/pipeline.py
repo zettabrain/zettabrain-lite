@@ -577,6 +577,28 @@ def build_computed_summary(computed: ComputedResult) -> str:
     return "\n".join(lines)
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough token count. Four characters per token is close enough to budget a prompt."""
+    return len(text) // 4
+
+
+def trim_corpus(corpus_context: str, max_chars: int) -> str:
+    """Shorten retrieved context to a character budget, cutting at a line boundary.
+
+    Small local models have small context windows — a 2048-token window is common. Sending
+    more than fits does not fail loudly: Ollama silently truncates from the front, which can
+    discard the skill's instructions and the computed figures. Trimming here keeps the parts
+    that matter and makes the loss deliberate.
+    """
+    if not corpus_context or len(corpus_context) <= max_chars:
+        return corpus_context
+    cut = corpus_context[:max_chars]
+    boundary = cut.rfind("\n")
+    if boundary > max_chars // 2:
+        cut = cut[:boundary]
+    return cut.rstrip() + "\n\n[...further source material omitted to fit the model's context]"
+
+
 def build_format_prompt(
     skill_instructions: str,
     corpus_context: str,
@@ -584,9 +606,12 @@ def build_format_prompt(
     computed: ComputedResult,
     business_identity: str = "",
     today: str = "",
+    max_corpus_chars: int = 0,
 ) -> str:
     from datetime import datetime  # noqa: PLC0415
 
+    if max_corpus_chars:
+        corpus_context = trim_corpus(corpus_context, max_corpus_chars)
     summary = build_computed_summary(computed)
     return _FORMAT_PROMPT.format(
         skill_instructions=skill_instructions,

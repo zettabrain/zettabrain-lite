@@ -200,3 +200,39 @@ class TestPromptBudget:
         capped = build_format_prompt("do the thing", corpus, "quote please", computed,
                                      max_corpus_chars=2000)
         assert estimate_tokens(capped) < estimate_tokens(uncapped) / 2
+
+
+class TestLineTotalLabelling:
+    """Gross and net must both be named.
+
+    Emitting only the net under the label "line_total" produced customer-facing tables where
+    quantity x unit price did not equal the stated line total.
+    """
+
+    def _summary_with_discount(self):
+        items = _items()
+        for li in items:
+            li.discount_percent = Decimal("12")
+            li.discount_reason = "Corporate account discount"
+        return build_computed_summary(compute_totals(
+            ExtractedData(line_items=items, currency="NGN")
+        ))
+
+    def test_gross_line_total_is_present(self):
+        summary = self._summary_with_discount()
+        assert "₦1,260,000.00" in summary  # 3 x 420,000
+
+    def test_net_is_named_separately(self):
+        summary = self._summary_with_discount()
+        assert "net_total" in summary
+        assert "₦1,108,800.00" in summary  # after 12%
+
+    def test_gross_is_labelled_as_the_product(self):
+        assert "(quantity x unit_price)" in self._summary_with_discount()
+
+    def test_no_net_line_when_there_is_no_discount(self):
+        summary = build_computed_summary(compute_totals(
+            ExtractedData(line_items=_items(), currency="NGN")
+        ))
+        assert "net_total" not in summary
+        assert "₦1,260,000.00" in summary

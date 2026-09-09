@@ -222,6 +222,11 @@ instructions describe.
 9. Write the document once. Do not repeat a section, restate the totals in a second block, or append a
    summary of the values you were given.
 10. Do not include a workings or calculation-summary section. The reader wants the figures, not the steps.
+11. Do NOT invent commercial terms. Interest on late payment, accepted payment methods, validity periods,
+    warranty, cancellation and notice periods commit the sender to something. State only what appears in
+    the corpus, the task instructions or the customer's request. Where a term is needed but unavailable,
+    write [NEEDS INPUT: what is missing] and move on. "Interest at 2% per month" invented for a quote is
+    a promise the sender never made.
 
 Begin writing the document now:"""
 
@@ -524,12 +529,19 @@ def build_computed_summary(computed: ComputedResult) -> str:
         if ld.get("unit"):
             lines.append(f"  item_{i}.unit        = {ld['unit']}")
         lines.append(f"  item_{i}.unit_price  = {money(ld['unit_price'], cur)}")
+        # Gross and net are both named. Emitting only the net under the label "line_total"
+        # produced tables where quantity x unit price did not equal the line total.
+        lines.append(
+            f"  item_{i}.line_total  = {money(ld['line_total'], cur)}  (quantity x unit_price)"
+        )
         if Decimal(ld["discount_amount"]) > 0:
             lines.append(
                 f"  item_{i}.discount    = {qty(ld['discount_percent'])}% "
                 f"(-{money(ld['discount_amount'], cur)}) {ld.get('discount_reason', '')}".rstrip()
             )
-        lines.append(f"  item_{i}.line_total  = {money(ld['net_total'], cur)}")
+            lines.append(
+                f"  item_{i}.net_total   = {money(ld['net_total'], cur)}  (after this line's discount)"
+            )
 
     if computed.order_discount_details:
         lines.append("")

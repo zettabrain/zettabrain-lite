@@ -321,15 +321,41 @@ class GenerationEngine:
                 if not extracted.currency and skill.currency:
                     extracted.currency = skill.currency
 
-                # Inject tax from skill frontmatter — no LLM involvement in tax calculation
-                if skill.tax_rate > 0 and not extracted.taxes:
-                    extracted.taxes.append(
-                        TaxSpec(
-                            description=skill.tax_name or "Tax",
-                            rate_percent=_Dec(str(skill.tax_rate)),
-                            source_ref="skill configuration",
+                # Tax comes from the skill first, then from the price list itself. Reading the
+                # price list matters: a skill created without a tax rate used to produce a
+                # quote with no tax at all, silently, even though the rate was sitting in the
+                # user's own file.
+                if not extracted.taxes:
+                    if skill.tax_rate > 0:
+                        extracted.taxes.append(
+                            TaxSpec(
+                                description=skill.tax_name or "Tax",
+                                rate_percent=_Dec(str(skill.tax_rate)),
+                                source_ref="skill configuration",
+                            )
                         )
-                    )
+                    else:
+                        from ..price_list import get_tax_setting  # noqa: PLC0415
+
+                        from_file = None
+                        for source in source_files or [""]:
+                            from_file = get_tax_setting(source)
+                            if from_file:
+                                break
+                        if from_file:
+                            extracted.taxes.append(
+                                TaxSpec(
+                                    description=from_file["name"],
+                                    rate_percent=_Dec(str(from_file["rate"])),
+                                    source_ref="price list",
+                                )
+                            )
+                        else:
+                            warnings.append(
+                                "No tax rate is set for this skill and none was found in the "
+                                "price list, so the total excludes tax. Add the rate to your "
+                                "price list, or set it on the skill."
+                            )
 
                 if not extracted.line_items:
                     warnings.append(
